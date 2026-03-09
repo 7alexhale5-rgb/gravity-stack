@@ -4,6 +4,7 @@ import localFont from "next/font/local";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { SearchDialog } from "@/components/SearchDialog";
+import { CursorGlow } from "@/components/CursorGlow";
 import "./globals.css";
 
 const instrumentSerif = Instrument_Serif({
@@ -78,6 +79,7 @@ export default function RootLayout({
         <main className="min-h-[calc(100vh-3.5rem)]">{children}</main>
         <Footer />
         <SearchDialog />
+        <CursorGlow />
       </body>
     </html>
   );

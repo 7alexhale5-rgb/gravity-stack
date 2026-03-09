@@ -1,5 +1,7 @@
 import { Card } from "@/components/Card";
 import { Badge } from "@/components/Badge";
+import { ScrollReveal } from "@/components/ScrollReveal";
+import { SectionDivider } from "@/components/SectionDivider";
 
 export const metadata = {
   title: "Roadmap",
@@ -67,32 +69,38 @@ export default function RoadmapPage() {
       </p>
 
       <div className="space-y-4">
-        {roadmapItems.map((item) => (
-          <Card key={item.title} className="flex flex-col md:flex-row md:items-start gap-4">
-            <div className="flex-shrink-0">
-              <Badge variant={statusColors[item.status]}>{item.status}</Badge>
-            </div>
-            <div>
-              <h3 className="font-medium text-text mb-1">{item.title}</h3>
-              <p className="text-sm text-dim">{item.description}</p>
-            </div>
-          </Card>
+        {roadmapItems.map((item, i) => (
+          <ScrollReveal key={item.title} delay={i * 0.06}>
+            <Card className="flex flex-col md:flex-row md:items-start gap-4">
+              <div className="flex-shrink-0">
+                <Badge variant={statusColors[item.status]}>{item.status}</Badge>
+              </div>
+              <div>
+                <h3 className="font-medium text-text mb-1">{item.title}</h3>
+                <p className="text-sm text-dim">{item.description}</p>
+              </div>
+            </Card>
+          </ScrollReveal>
         ))}
       </div>
 
-      <div className="mt-16 text-center">
-        <p className="text-dim mb-4">
-          Have an idea? Want to contribute?
-        </p>
-        <a
-          href="https://github.com/alexhale/gravity-stack/issues"
-          className="inline-flex items-center px-6 py-3 rounded-[8px] border border-gs-border text-text hover:border-electric/30 transition-colors"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Open an Issue on GitHub
-        </a>
-      </div>
+      <SectionDivider className="mt-16 mb-12" />
+
+      <ScrollReveal>
+        <div className="text-center">
+          <p className="text-dim mb-4">
+            Have an idea? Want to contribute?
+          </p>
+          <a
+            href="https://github.com/alexhale/gravity-stack/issues"
+            className="inline-flex items-center px-6 py-3 rounded-[8px] border border-gs-border text-text hover:border-electric/30 transition-colors"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open an Issue on GitHub
+          </a>
+        </div>
+      </ScrollReveal>
     </div>
   );
 }

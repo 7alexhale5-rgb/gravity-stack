@@ -107,7 +107,7 @@ export function SearchDialog() {
     <div className="fixed inset-0 z-[100]">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-bg/80 backdrop-blur-sm"
+        className="absolute inset-0 bg-bg/80 backdrop-blur-md"
         onClick={() => {
           setOpen(false);
           setQuery("");
@@ -115,7 +115,7 @@ export function SearchDialog() {
       />
 
       {/* Dialog */}
-      <div className="relative max-w-xl mx-auto mt-[15vh] bg-s1 border border-gs-border rounded-xl shadow-2xl overflow-hidden">
+      <div className="relative max-w-xl mx-auto mt-[15vh] glass border border-glass-border rounded-xl shadow-2xl overflow-hidden">
         {/* Search input */}
         <div className="flex items-center gap-3 px-4 border-b border-gs-border">
           <svg className="w-4 h-4 text-dim flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
@@ -132,7 +132,7 @@ export function SearchDialog() {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Search documentation..."
-            className="flex-1 py-3 bg-transparent text-text placeholder:text-dim outline-none text-sm"
+            className="flex-1 py-3 bg-transparent text-text placeholder:text-dim outline-none text-sm focus:ring-1 focus:ring-electric/20"
           />
           <kbd className="hidden md:inline-flex items-center px-1.5 py-0.5 rounded border border-gs-border text-[10px] text-dim font-mono">
             ESC
@@ -151,7 +151,7 @@ export function SearchDialog() {
                 key={`${item.href}-${item.title}`}
                 onClick={() => navigate(item.href)}
                 className={`w-full text-left px-3 py-2.5 rounded-lg flex items-start gap-3 transition-colors ${
-                  i === selectedIndex ? "bg-s2" : "hover:bg-s2"
+                  i === selectedIndex ? "bg-s2 shadow-[inset_0_0_0_1px_rgba(0,212,255,0.08)]" : "hover:bg-s2"
                 }`}
               >
                 <span className="text-[10px] font-mono text-dim uppercase tracking-wider mt-1 w-12 flex-shrink-0">
@@ -189,7 +189,7 @@ export function SearchTrigger() {
           new KeyboardEvent("keydown", { key: "k", metaKey: true })
         );
       }}
-      className="hidden md:inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gs-border text-xs text-dim hover:text-text hover:border-electric/20 transition-colors"
+      className="hidden md:inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gs-border text-xs text-dim hover:text-text hover:border-electric/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.08)] transition-colors"
     >
       <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
         <path

@@ -2,6 +2,7 @@ import { plugins, pluginCategories } from "@/lib/data/plugins";
 import { PluginCard } from "@/components/PluginCard";
 import { Badge } from "@/components/Badge";
 import { PageHeader } from "@/components/PageHeader";
+import { ScrollReveal } from "@/components/ScrollReveal";
 
 export const metadata = {
   title: "Plugins",
@@ -20,17 +21,21 @@ export default function PluginsPage() {
         Plugins load on-demand — having 31 enabled doesn&apos;t slow startup.
       </p>
 
-      <div className="flex flex-wrap gap-2 mb-8">
-        {pluginCategories.map((cat) => (
-          <Badge key={cat} variant={cat}>
-            {cat} ({plugins.filter((p) => p.category === cat).length})
-          </Badge>
-        ))}
-      </div>
+      <ScrollReveal>
+        <div className="flex flex-wrap gap-2 mb-8">
+          {pluginCategories.map((cat) => (
+            <Badge key={cat} variant={cat}>
+              {cat} ({plugins.filter((p) => p.category === cat).length})
+            </Badge>
+          ))}
+        </div>
+      </ScrollReveal>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {plugins.map((plugin) => (
-          <PluginCard key={plugin.id} plugin={plugin} />
+        {plugins.map((plugin, i) => (
+          <ScrollReveal key={plugin.id} delay={i * 0.04}>
+            <PluginCard plugin={plugin} />
+          </ScrollReveal>
         ))}
       </div>
     </div>

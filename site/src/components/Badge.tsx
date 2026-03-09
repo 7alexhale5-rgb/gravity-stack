@@ -40,7 +40,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center px-2.5 py-0.5 rounded-[6px] text-xs font-medium border",
+        "inline-flex items-center px-2.5 py-0.5 rounded-[6px] text-xs font-medium border transition-colors cursor-default badge-shimmer",
         variants[variant] || variants.custom
       )}
     >

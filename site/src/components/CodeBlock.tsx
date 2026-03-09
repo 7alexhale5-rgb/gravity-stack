@@ -46,18 +46,25 @@ export function CodeBlock({
   };
 
   return (
-    <div className="relative rounded-[10px] border border-gs-border bg-s1 overflow-hidden">
+    <div className="relative rounded-[10px] border border-gs-border bg-s1 overflow-hidden glow-border">
       {filename && (
         <div className="flex items-center justify-between px-4 py-2 border-b border-gs-border bg-s2">
           <span className="text-xs font-mono text-dim">{filename}</span>
         </div>
       )}
       <div className="relative">
+        {language && (
+          <span className="absolute top-3 left-4 text-[10px] font-mono text-dim/50 uppercase tracking-wider">{language}</span>
+        )}
         <button
           onClick={handleCopy}
           className="absolute top-3 right-3 text-xs text-dim hover:text-text bg-s2 px-2 py-1 rounded border border-gs-border transition-colors z-10"
         >
-          {copied ? "Copied!" : "Copy"}
+          {copied ? (
+            <svg className="w-3.5 h-3.5 text-electric" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+          ) : (
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+          )}
         </button>
         <ShikiOutput html={highlightedHtml} fallback={code} />
       </div>

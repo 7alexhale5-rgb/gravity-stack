@@ -1,16 +1,25 @@
 import { cn } from "@/lib/utils";
 
-export function Card({
-  children,
-  className,
-}: {
+type CardVariant = "default" | "glass" | "glow";
+
+interface CardProps {
   children: React.ReactNode;
   className?: string;
-}) {
+  variant?: CardVariant;
+}
+
+const variantStyles: Record<CardVariant, string> = {
+  default: "card-glow bg-s1",
+  glass: "glass bg-s1/40",
+  glow: "glow-card bg-s1/60 glass",
+};
+
+export function Card({ children, className, variant = "default" }: CardProps) {
   return (
     <div
       className={cn(
-        "card-glow rounded-[10px] bg-s1 p-6 transition-all duration-200",
+        "rounded-[10px] p-6 transition-all duration-300",
+        variantStyles[variant],
         className
       )}
     >

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { GlowEffect } from "./GlowEffect";
 
 const navGroups = [
   {
@@ -31,8 +32,15 @@ const navGroups = [
 
 export function Footer() {
   return (
-    <footer className="border-t border-gs-border mt-24">
-      <div className="max-w-[1400px] mx-auto px-5 md:px-[60px] py-12 md:py-16">
+    <footer className="relative mt-24 overflow-hidden">
+      {/* Gradient divider at top */}
+      <div className="h-[1px] bg-gradient-to-r from-transparent via-electric/20 to-transparent" aria-hidden="true" />
+
+      {/* Ambient glow */}
+      <GlowEffect color="bg-electric/2" size="w-[400px] h-[200px]" blur="blur-[120px]" position="absolute -bottom-20 left-1/4" />
+      <GlowEffect color="bg-nova/2" size="w-[300px] h-[150px]" blur="blur-[100px]" position="absolute -bottom-10 right-1/3" />
+
+      <div className="max-w-[1400px] mx-auto px-5 md:px-[60px] py-12 md:py-16 relative">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">
@@ -53,7 +61,7 @@ export function Footer() {
                   <li key={link.href}>
                     <Link
                       href={link.href}
-                      className="text-sm text-dim hover:text-text transition-colors"
+                      className="text-sm text-dim hover:text-electric transition-colors"
                     >
                       {link.label}
                     </Link>
@@ -65,20 +73,20 @@ export function Footer() {
         </div>
 
         {/* Bottom bar */}
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4 pt-8 border-t border-gs-border/50">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-4 pt-8 border-t border-gs-border/30">
           <p className="text-xs text-dim">
             MIT License &middot; By Alex Hale &amp; Claude
           </p>
           <div className="flex items-center gap-4">
             <a
               href="https://github.com/alexhale/gravity-stack"
-              className="text-xs text-dim hover:text-text transition-colors"
+              className="text-xs text-dim hover:text-electric transition-colors"
               target="_blank"
               rel="noopener noreferrer"
             >
               GitHub
             </a>
-            <span className="text-gs-border">&middot;</span>
+            <span className="text-gs-border/50">&middot;</span>
             <span className="text-xs text-dim">
               Built with Next.js 16 &amp; Tailwind v4
             </span>
