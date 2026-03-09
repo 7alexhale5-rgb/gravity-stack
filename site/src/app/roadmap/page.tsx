@@ -2,7 +2,7 @@ import { Card } from "@/components/Card";
 import { Badge } from "@/components/Badge";
 
 export const metadata = {
-  title: "Roadmap — Gravity Stack",
+  title: "Roadmap",
   description: "What's planned next for the Gravity Stack.",
 };
 

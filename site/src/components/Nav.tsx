@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { ActiveLink } from "./ActiveLink";
 import { MobileMenu } from "./MobileMenu";
+import { SearchTrigger } from "./SearchDialog";
 
 const links = [
   { href: "/", label: "Home" },
@@ -9,6 +11,7 @@ const links = [
   { href: "/mcp-servers", label: "MCP" },
   { href: "/hooks", label: "Hooks" },
   { href: "/carl", label: "CARL" },
+  { href: "/skills", label: "Skills" },
   { href: "/agents", label: "Agents" },
   { href: "/architecture", label: "Architecture" },
   { href: "/setup", label: "Setup" },
@@ -22,16 +25,13 @@ export function Nav() {
         <Link href="/" className="font-heading text-xl text-electric">
           Gravity Stack
         </Link>
-        <div className="hidden lg:flex items-center gap-6">
+        <div className="hidden lg:flex items-center gap-5">
           {links.slice(1).map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="text-sm text-dim hover:text-text transition-colors"
-            >
+            <ActiveLink key={link.href} href={link.href}>
               {link.label}
-            </Link>
+            </ActiveLink>
           ))}
+          <SearchTrigger />
         </div>
         <MobileMenu links={links} />
       </div>

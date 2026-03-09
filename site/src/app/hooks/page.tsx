@@ -1,23 +1,21 @@
 import { hooks } from "@/lib/data/hooks";
 import { HookCard } from "@/components/HookCard";
 import { Callout } from "@/components/Callout";
+import { PageHeader } from "@/components/PageHeader";
 
 export const metadata = {
-  title: "Lifecycle Hooks — Gravity Stack",
+  title: "Lifecycle Hooks",
   description: "7 lifecycle hooks providing automated guardrails, context injection, and governance.",
 };
 
 export default function HooksPage() {
   return (
     <div className="max-w-[1400px] mx-auto px-5 md:px-[60px] py-16 md:py-24">
-      <h1 className="font-heading text-4xl md:text-6xl mb-6">
-        <span className="gradient-text">Lifecycle Hooks</span>
-      </h1>
-      <p className="text-xl text-dim max-w-2xl mb-8">
-        Hooks are shell commands that execute automatically in response to Claude
-        Code lifecycle events. They run before or after specific actions, enabling
-        guardrails, automation, and context injection.
-      </p>
+      <PageHeader
+        eyebrow="Layer 2 — Governance"
+        title="Lifecycle Hooks"
+        description="Hooks are shell commands that execute automatically in response to Claude Code lifecycle events. They run before or after specific actions, enabling guardrails, automation, and context injection."
+      />
 
       <Callout variant="tip" title="How hooks work">
         Hooks are configured in <code className="font-mono text-xs bg-s2 px-1.5 py-0.5 rounded">~/.claude/settings.json</code>.

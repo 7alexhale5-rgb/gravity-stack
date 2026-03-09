@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Instrument_Serif, DM_Mono } from "next/font/google";
 import localFont from "next/font/local";
 import { Nav } from "@/components/Nav";
+import { Footer } from "@/components/Footer";
+import { SearchDialog } from "@/components/SearchDialog";
 import "./globals.css";
 
 const instrumentSerif = Instrument_Serif({
@@ -26,14 +28,40 @@ const satoshi = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Gravity Stack — AI-Native Dev Environment",
+  title: {
+    default: "Gravity Stack — AI-Native Dev Environment",
+    template: "%s — Gravity Stack",
+  },
   description:
-    "The complete blueprint for a top 1% AI-native development environment. 31 plugins, 9+3 MCP servers, 7 hooks, 53 skills.",
+    "The complete blueprint for a top 1% AI-native development environment. 31 plugins, 7+3 MCP servers, 7 hooks, 53 skills, CARL governance engine.",
+  metadataBase: new URL("https://site-phi-lac-73.vercel.app"),
   openGraph: {
     title: "Gravity Stack",
-    description: "The complete blueprint for a top 1% AI-native development environment.",
+    description:
+      "The complete blueprint for a top 1% AI-native development environment. Open source. Documented. Ready to fork.",
     type: "website",
+    siteName: "Gravity Stack",
+    locale: "en_US",
   },
+  twitter: {
+    card: "summary_large_image",
+    title: "Gravity Stack",
+    description:
+      "The complete blueprint for a top 1% AI-native development environment.",
+  },
+  keywords: [
+    "Claude Code",
+    "AI development",
+    "AI-native",
+    "MCP servers",
+    "Claude plugins",
+    "CARL engine",
+    "developer tools",
+    "AI coding",
+    "development environment",
+  ],
+  authors: [{ name: "Alex Hale" }],
+  creator: "Alex Hale",
 };
 
 export default function RootLayout({
@@ -47,7 +75,9 @@ export default function RootLayout({
         className={`${instrumentSerif.variable} ${dmMono.variable} ${satoshi.variable} antialiased`}
       >
         <Nav />
-        <main>{children}</main>
+        <main className="min-h-[calc(100vh-3.5rem)]">{children}</main>
+        <Footer />
+        <SearchDialog />
       </body>
     </html>
   );

@@ -5,7 +5,7 @@ import { CodeBlock } from "@/components/CodeBlock";
 import { Callout } from "@/components/Callout";
 
 export const metadata = {
-  title: "Agent Teams — Gravity Stack",
+  title: "Agent Teams",
   description: "5 core agent roles plus specialized agents with model-tier routing.",
 };
 

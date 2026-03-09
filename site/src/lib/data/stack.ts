@@ -8,7 +8,7 @@ export const stackLayers: StackLayer[] = [
   {
     name: "Intelligence",
     description: "Claude Code CLI with 31 plugins providing specialized capabilities (code review, testing, deployment, design, security, etc.)",
-    components: ["31 Plugins", "53 Skills", "5 Agent Roles"],
+    components: ["31 Plugins", "50 Skills", "5 Agent Roles"],
   },
   {
     name: "Governance",
@@ -24,9 +24,9 @@ export const stackLayers: StackLayer[] = [
 
 export const stackStats = {
   plugins: 31,
-  mcpServers: { local: 7, cloud: 3, display: "9+3" },
+  mcpServers: { local: 7, cloud: 3, display: "7+3" },
   hooks: 7,
-  skills: 53,
+  skills: 50,
   agentRoles: 5,
   carlLines: 1073,
 } as const;

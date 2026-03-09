@@ -10,7 +10,7 @@ export function Card({
   return (
     <div
       className={cn(
-        "card-glow rounded-[10px] bg-s1 p-6",
+        "card-glow rounded-[10px] bg-s1 p-6 transition-all duration-200",
         className
       )}
     >

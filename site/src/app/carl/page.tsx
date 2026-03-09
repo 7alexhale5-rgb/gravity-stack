@@ -3,8 +3,10 @@ import { Badge } from "@/components/Badge";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Callout } from "@/components/Callout";
 
+import { PageHeader } from "@/components/PageHeader";
+
 export const metadata = {
-  title: "CARL — Gravity Stack",
+  title: "CARL Engine",
   description: "Context Augmentation & Reinforcement Layer: the 1,073-line governance engine.",
 };
 
@@ -57,14 +59,12 @@ domains:
 export default function CARLPage() {
   return (
     <div className="max-w-[1400px] mx-auto px-5 md:px-[60px] py-16 md:py-24">
-      <h1 className="font-heading text-4xl md:text-6xl mb-6">
-        <span className="gradient-text">CARL</span>
-      </h1>
-      <p className="text-xl text-dim max-w-2xl mb-4">
-        Context Augmentation &amp; Reinforcement Layer — a 1,073-line Python
-        governance engine that runs as a UserPromptSubmit hook.
-      </p>
-      <p className="text-dim max-w-2xl mb-12">
+      <PageHeader
+        eyebrow="Layer 2 — Governance"
+        title="CARL"
+        description="Context Augmentation & Reinforcement Layer — a 1,073-line Python governance engine that runs as a UserPromptSubmit hook."
+      />
+      <p className="text-dim max-w-2xl mb-12 -mt-8">
         On every message you send to Claude, CARL measures context, selects a
         bracket, injects domain rules, routes decisions, and enforces governance.
       </p>

@@ -4,7 +4,7 @@ import { CodeBlock } from "@/components/CodeBlock";
 import { Callout } from "@/components/Callout";
 
 export const metadata = {
-  title: "Setup — Gravity Stack",
+  title: "Setup Guide",
   description: "Step-by-step installation guide for the Gravity Stack AI-native development environment.",
 };
 

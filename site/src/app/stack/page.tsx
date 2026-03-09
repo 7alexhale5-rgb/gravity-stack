@@ -1,23 +1,22 @@
 import { stackLayers, stackStats, agentRoles } from "@/lib/data/stack";
 import { Card } from "@/components/Card";
 import { Badge } from "@/components/Badge";
+import { PageHeader } from "@/components/PageHeader";
 import Link from "next/link";
 
 export const metadata = {
-  title: "The Stack — Gravity Stack",
+  title: "The Stack",
   description: "Architecture overview of the Gravity Stack: Intelligence, Governance, and Infrastructure layers.",
 };
 
 export default function StackPage() {
   return (
     <div className="max-w-[1400px] mx-auto px-5 md:px-[60px] py-16 md:py-24">
-      <h1 className="font-heading text-4xl md:text-6xl mb-6">
-        <span className="gradient-text">The Stack</span>
-      </h1>
-      <p className="text-xl text-dim max-w-2xl mb-12">
-        Three layers working together: Intelligence for capabilities, Governance
-        for guardrails, Infrastructure for reach.
-      </p>
+      <PageHeader
+        eyebrow="Overview"
+        title="The Stack"
+        description="Three layers working together: Intelligence for capabilities, Governance for guardrails, Infrastructure for reach."
+      />
 
       <div className="space-y-6 mb-16">
         {stackLayers.map((layer, i) => (
@@ -52,7 +51,7 @@ export default function StackPage() {
           { value: stackStats.plugins, label: "Plugins", href: "/plugins" },
           { value: stackStats.mcpServers.display, label: "MCP Servers", href: "/mcp-servers" },
           { value: stackStats.hooks, label: "Hooks", href: "/hooks" },
-          { value: stackStats.skills, label: "Skills", href: "/stack" },
+          { value: stackStats.skills, label: "Skills", href: "/skills" },
           { value: stackStats.agentRoles, label: "Agent Roles", href: "/agents" },
           { value: stackStats.carlLines.toLocaleString(), label: "CARL Lines", href: "/carl" },
         ].map((stat) => (

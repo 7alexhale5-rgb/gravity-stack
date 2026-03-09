@@ -4,22 +4,21 @@ import { Badge } from "@/components/Badge";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Callout } from "@/components/Callout";
 
+import { PageHeader } from "@/components/PageHeader";
+
 export const metadata = {
-  title: "MCP Servers — Gravity Stack",
-  description: "9+3 MCP servers connecting Claude to browsers, search engines, memory, and more.",
+  title: "MCP Servers",
+  description: "7+3 MCP servers connecting Claude to browsers, search engines, memory, and more.",
 };
 
 export default function MCPServersPage() {
   return (
     <div className="max-w-[1400px] mx-auto px-5 md:px-[60px] py-16 md:py-24">
-      <h1 className="font-heading text-4xl md:text-6xl mb-6">
-        <span className="gradient-text">MCP Server Constellation</span>
-      </h1>
-      <p className="text-xl text-dim max-w-2xl mb-12">
-        Model Context Protocol servers extend Claude&apos;s reach beyond the terminal.
-        Each server exposes tools that Claude can call — a memory database, a web
-        browser, a search engine, a knowledge base.
-      </p>
+      <PageHeader
+        eyebrow="Layer 3 — Infrastructure"
+        title="MCP Server Constellation"
+        description="Model Context Protocol servers extend Claude's reach beyond the terminal. Each server exposes tools that Claude can call — a memory database, a web browser, a search engine, a knowledge base."
+      />
 
       <h2 className="font-heading text-3xl text-text mb-6">
         Local Servers ({mcpServers.length})

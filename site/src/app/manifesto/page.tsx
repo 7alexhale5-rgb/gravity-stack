@@ -1,7 +1,7 @@
 import { Callout } from "@/components/Callout";
 
 export const metadata = {
-  title: "Manifesto — Gravity Stack",
+  title: "Manifesto",
   description: "Why AI-native development matters. The philosophy behind the Gravity Stack.",
 };
 

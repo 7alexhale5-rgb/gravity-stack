@@ -3,7 +3,7 @@ import { DiagramNode } from "@/components/DiagramNode";
 import { Badge } from "@/components/Badge";
 
 export const metadata = {
-  title: "Architecture — Gravity Stack",
+  title: "Architecture",
   description: "Full system architecture diagram and layer descriptions.",
 };
 
@@ -12,7 +12,7 @@ const architectureDiagram = `┌────────────────
 │  ┌───────────────────────────────────────────────────────┐ │
 │  │                   CLAUDE CODE CLI                     │ │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐            │ │
-│  │  │ 31       │  │ 9+3 MCP  │  │ 7        │            │ │
+│  │  │ 31       │  │ 7+3 MCP  │  │ 7        │            │ │
 │  │  │ Plugins  │  │ Servers  │  │ Hooks    │            │ │
 │  │  └────┬─────┘  └────┬─────┘  └────┬─────┘            │ │
 │  │       │              │              │                  │ │
