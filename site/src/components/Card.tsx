@@ -11,7 +11,7 @@ interface CardProps {
 const variantStyles: Record<CardVariant, string> = {
   default: "card-glow bg-s1",
   glass: "glass bg-s1/40",
-  glow: "glow-card bg-s1/60 glass",
+  glow: "glow-border bg-s1/60 glass",
 };
 
 export function Card({ children, className, variant = "default" }: CardProps) {

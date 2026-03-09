@@ -34,7 +34,7 @@ export function Footer() {
   return (
     <footer className="relative mt-24 overflow-hidden">
       {/* Gradient divider at top */}
-      <div className="h-[1px] bg-gradient-to-r from-transparent via-electric/20 to-transparent" aria-hidden="true" />
+      <div className="h-[1px] bg-gradient-to-r from-transparent via-cyan/20 to-transparent" aria-hidden="true" />
 
       {/* Ambient glow */}
       <GlowEffect color="bg-electric/2" size="w-[400px] h-[200px]" blur="blur-[120px]" position="absolute -bottom-20 left-1/4" />

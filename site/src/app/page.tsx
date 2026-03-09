@@ -13,7 +13,7 @@ const features = [
       "Curated plugin collection covering code review, testing, deployment, design, security, and more. Every one verified in production.",
     href: "/plugins",
     color: "text-electric",
-    glowColor: "rgba(0, 212, 255, 0.12)",
+    glowColor: "rgba(0, 255, 136, 0.12)",
     icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
   },
   {
@@ -22,7 +22,7 @@ const features = [
       "Connect Claude to browsers, search engines, knowledge bases, memory stores, and communication platforms.",
     href: "/mcp-servers",
     color: "text-volt",
-    glowColor: "rgba(184, 255, 0, 0.10)",
+    glowColor: "rgba(34, 197, 94, 0.10)",
     icon: "M5 12h14M12 5v14M8.5 8.5L15.5 15.5M15.5 8.5L8.5 15.5",
   },
   {
@@ -31,7 +31,7 @@ const features = [
       "Automated guardrails: commit gates, file guards, session backup, auto-lint, context injection. Every commit type-safe.",
     href: "/hooks",
     color: "text-heat",
-    glowColor: "rgba(255, 77, 46, 0.10)",
+    glowColor: "rgba(255, 68, 68, 0.10)",
     icon: "M13 10V3L4 14h7v7l9-11h-7z",
   },
   {
@@ -40,7 +40,7 @@ const features = [
       "Reusable prompt templates for planning, development, research, design, management, and business workflows.",
     href: "/skills",
     color: "text-nova",
-    glowColor: "rgba(192, 132, 252, 0.10)",
+    glowColor: "rgba(255, 136, 0, 0.10)",
     icon: "M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z",
   },
   {
@@ -49,7 +49,7 @@ const features = [
       "1,073-line governance engine. Context brackets, domain rules, planning router, model routing, cost management.",
     href: "/carl",
     color: "text-glow",
-    glowColor: "rgba(251, 191, 36, 0.10)",
+    glowColor: "rgba(0, 255, 136, 0.10)",
     icon: "M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z",
   },
   {
@@ -58,7 +58,7 @@ const features = [
       "5 specialized roles — Architect, Implementer, Researcher, Reviewer, Tester — with model-tier routing.",
     href: "/agents",
     color: "text-ice",
-    glowColor: "rgba(45, 212, 191, 0.10)",
+    glowColor: "rgba(0, 255, 136, 0.10)",
     icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z",
   },
 ];
@@ -199,7 +199,7 @@ export default function HomePage() {
                 <MagneticButton>
                   <Link
                     href="/setup"
-                    className="inline-flex items-center px-7 py-3.5 rounded-[10px] bg-electric text-bg font-medium hover:bg-electric/90 transition-all hover:shadow-[0_0_30px_rgba(0,212,255,0.4)]"
+                    className="inline-flex items-center px-7 py-3.5 rounded-[10px] bg-electric text-bg font-medium hover:bg-electric/90 transition-all hover:shadow-[0_0_30px_rgba(0,255,136,0.4)]"
                   >
                     Setup Guide
                   </Link>

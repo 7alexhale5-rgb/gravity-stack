@@ -1,30 +1,23 @@
 import type { Metadata } from "next";
-import { Instrument_Serif, DM_Mono } from "next/font/google";
-import localFont from "next/font/local";
+import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { SearchDialog } from "@/components/SearchDialog";
-import { CursorGlow } from "@/components/CursorGlow";
+import { ParticleNetwork } from "@/components/ParticleNetwork";
 import "./globals.css";
 
-const instrumentSerif = Instrument_Serif({
+const spaceGroteskHeading = Space_Grotesk({
   subsets: ["latin"],
-  weight: "400",
   variable: "--font-heading",
 });
 
-const dmMono = DM_Mono({
+const jetBrainsMono = JetBrains_Mono({
   subsets: ["latin"],
-  weight: ["400", "500"],
   variable: "--font-mono",
 });
 
-const satoshi = localFont({
-  src: [
-    { path: "../fonts/Satoshi-Regular.woff2", weight: "400" },
-    { path: "../fonts/Satoshi-Medium.woff2", weight: "500" },
-    { path: "../fonts/Satoshi-Bold.woff2", weight: "700" },
-  ],
+const spaceGroteskBody = Space_Grotesk({
+  subsets: ["latin"],
   variable: "--font-body",
 });
 
@@ -73,13 +66,13 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${instrumentSerif.variable} ${dmMono.variable} ${satoshi.variable} antialiased`}
+        className={`${spaceGroteskHeading.variable} ${jetBrainsMono.variable} ${spaceGroteskBody.variable} antialiased`}
       >
         <Nav />
         <main className="min-h-[calc(100vh-3.5rem)]">{children}</main>
         <Footer />
         <SearchDialog />
-        <CursorGlow />
+        <ParticleNetwork />
       </body>
     </html>
   );

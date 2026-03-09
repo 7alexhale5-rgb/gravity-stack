@@ -5,8 +5,6 @@ import { useEffect, useRef, useState } from "react";
 import { stackStats } from "@/lib/data/stack";
 import { TextReveal } from "./TextReveal";
 import { MagneticButton } from "./MagneticButton";
-import { SplineHero } from "./SplineHero";
-
 function CountUp({ target, duration = 2 }: { target: number | string; duration?: number }) {
   const numTarget = typeof target === "string" ? parseInt(target) || 0 : target;
   const [count, setCount] = useState(0);
@@ -46,9 +44,6 @@ function CountUp({ target, duration = 2 }: { target: number | string; duration?:
 export function Hero() {
   return (
     <section className="relative overflow-hidden py-28 md:py-40">
-      {/* 3D / Gradient mesh background */}
-      <SplineHero />
-
       {/* Layered glow background */}
       <div className="absolute inset-0 -z-10" aria-hidden="true">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[600px] rounded-full bg-electric/5 blur-[150px]" />

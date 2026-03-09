@@ -22,7 +22,7 @@ export function Nav() {
   return (
     <nav className="sticky top-0 z-50 backdrop-blur-[16px] bg-bg/70 border-b border-gs-border/50 transition-all duration-300">
       {/* Bottom glow line */}
-      <div className="absolute bottom-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-electric/20 to-transparent" aria-hidden="true" />
+      <div className="absolute bottom-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-cyan/20 to-transparent" aria-hidden="true" />
 
       <div className="max-w-[1400px] mx-auto px-5 md:px-[60px] flex items-center justify-between h-14">
         <Link href="/" className="font-heading text-xl text-electric hover:text-electric/80 transition-colors relative group">

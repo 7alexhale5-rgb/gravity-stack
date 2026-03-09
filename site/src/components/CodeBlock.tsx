@@ -1,6 +1,25 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+
+// Shiki highlighter singleton — avoids creating a new instance per CodeBlock
+let highlighterInstance: Awaited<ReturnType<typeof import("shiki")["createHighlighter"]>> | null = null;
+const loadedLangs = new Set<string>();
+
+async function highlight(code: string, language: string): Promise<string> {
+  const shiki = await import("shiki");
+  if (!highlighterInstance) {
+    highlighterInstance = await shiki.createHighlighter({
+      themes: ["github-dark"],
+      langs: [language],
+    });
+    loadedLangs.add(language);
+  } else if (!loadedLangs.has(language)) {
+    await highlighterInstance.loadLanguage(language as Parameters<typeof highlighterInstance.loadLanguage>[0]);
+    loadedLangs.add(language);
+  }
+  return highlighterInstance.codeToHtml(code, { lang: language, theme: "github-dark" });
+}
 
 /**
  * Syntax-highlighted code block using shiki.
@@ -18,31 +37,28 @@ export function CodeBlock({
 }) {
   const [copied, setCopied] = useState(false);
   const [highlightedHtml, setHighlightedHtml] = useState<string>("");
+  const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    import("shiki").then(async (shiki) => {
-      const highlighter = await shiki.createHighlighter({
-        themes: ["github-dark"],
-        langs: [language],
-      });
-      const result = highlighter.codeToHtml(code, {
-        lang: language,
-        theme: "github-dark",
-      });
-      if (!cancelled) {
-        setHighlightedHtml(result);
-      }
+    highlight(code, language).then((html) => {
+      if (!cancelled) setHighlightedHtml(html);
     });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [code, language]);
+
+  // Clean up copy timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (copyTimeout.current) clearTimeout(copyTimeout.current);
+    };
+  }, []);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(code);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (copyTimeout.current) clearTimeout(copyTimeout.current);
+    copyTimeout.current = setTimeout(() => setCopied(false), 2000);
   };
 
   return (
@@ -82,7 +98,8 @@ function ShikiOutput({ html, fallback }: { html: string; fallback: string }) {
     );
   }
 
-  // shiki output is trusted developer content, safe to render
+  // SECURITY: shiki output is trusted developer content from static data modules,
+  // never from user input. Safe to render as raw HTML.
   // eslint-disable-next-line react/no-danger
   return (
     <div

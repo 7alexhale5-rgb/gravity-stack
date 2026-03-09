@@ -25,7 +25,7 @@ export function GlowEffect({
         size,
         blur,
         position,
-        animate && "animate-glow-drift",
+        animate && "animate-[mesh-drift_20s_ease-in-out_infinite_alternate]",
         className
       )}
       aria-hidden="true"
