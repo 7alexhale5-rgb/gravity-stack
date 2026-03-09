@@ -1,0 +1,24 @@
+# Project Name
+
+## Overview
+Brief description of the project.
+
+## Tech Stack
+- Framework:
+- Language:
+- Database:
+- Deployment:
+
+## Conventions
+- Use kebab-case for file names
+- Prefer editing existing files over creating new ones
+- Read files before editing them
+
+## Key Files
+- `src/` — Source code
+- `tests/` — Test files
+
+## Commands
+- `npm run dev` — Start development server
+- `npm run build` — Build for production
+- `npm test` — Run tests

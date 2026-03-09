@@ -1,0 +1,84 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(git:*)",
+      "Read",
+      "Glob",
+      "Grep"
+    ]
+  },
+  "mcpServers": {
+    "playwright": {
+      "command": "npm",
+      "args": ["exec", "@playwright/mcp@0.0.68"]
+    },
+    "firecrawl": {
+      "command": "npm",
+      "args": ["exec", "firecrawl-mcp@3.9.0"]
+    },
+    "perplexity": {
+      "command": "npm",
+      "args": ["exec", "@perplexity-ai/mcp-server@0.8.2"]
+    },
+    "memory": {
+      "command": "npm",
+      "args": [
+        "exec",
+        "@modelcontextprotocol/server-memory@2026.1.26",
+        "--file",
+        "$HOME/.claude/memory/graph.json"
+      ]
+    },
+    "hacker-news": {
+      "command": "npm",
+      "args": ["exec", "hn-mcp@1.0.0"]
+    }
+  },
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [{
+          "type": "command",
+          "command": "osascript -e 'display notification \"Claude needs input\" with title \"Claude Code\" sound name \"Ping\"'"
+        }]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [{
+          "type": "command",
+          "command": "mkdir -p ~/.claude/backups && cp ~/.claude/current-session.jsonl ~/.claude/backups/session-$(date +%Y%m%d-%H%M%S).jsonl"
+        }]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [{
+          "type": "command",
+          "command": "python3 -c \"import json, sys; data=json.load(sys.stdin); path=data.get('tool_input',{}).get('file_path',''); sys.exit(2 if any(p in path for p in ['.env', 'package-lock.json', '.git/', 'supabase/migrations/']) else 0)\""
+        }]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{
+          "type": "command",
+          "command": "python3 $HOME/.claude/hooks/commit-gate.py"
+        }]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "echo '=== Git Status ===' && git status --short 2>/dev/null || echo 'Not a git repo'; echo ''; echo '=== CLAUDE.md ===' && cat CLAUDE.md 2>/dev/null || echo 'No CLAUDE.md'; echo ''; echo '=== Open Issues ===' && gh issue list --limit 5 2>/dev/null || echo 'gh not available'"
+        }]
+      }
+    ]
+  }
+}
