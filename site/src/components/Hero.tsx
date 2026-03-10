@@ -13,6 +13,12 @@ function CountUp({ target, duration = 2 }: { target: number | string; duration?:
 
   useEffect(() => {
     if (hasAnimated) return;
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (prefersReducedMotion) {
+      setCount(numTarget);
+      setHasAnimated(true);
+      return;
+    }
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
@@ -43,7 +49,7 @@ function CountUp({ target, duration = 2 }: { target: number | string; duration?:
 
 export function Hero() {
   return (
-    <section className="relative overflow-hidden py-28 md:py-40">
+    <section className="relative overflow-hidden py-16 md:py-24">
       {/* Layered glow background */}
       <div className="absolute inset-0 -z-10" aria-hidden="true">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[600px] rounded-full bg-electric/5 blur-[150px]" />
@@ -69,13 +75,13 @@ export function Hero() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="mb-8"
+          className="mb-5"
         >
           <span
             className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs text-electric font-medium"
             style={{
-              background: "rgba(0, 212, 255, 0.06)",
-              border: "1px solid rgba(0, 212, 255, 0.15)",
+              background: "rgba(0, 212, 255, 0.10)",
+              border: "1px solid rgba(0, 212, 255, 0.20)",
               backgroundSize: "200% 100%",
               animation: "border-shimmer 3s ease-in-out infinite",
             }}
@@ -101,7 +107,7 @@ export function Hero() {
         </motion.p>
 
         <motion.p
-          className="text-base text-gs-muted max-w-xl mb-14"
+          className="text-base text-gs-muted max-w-xl mb-10"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.8 }}
@@ -111,7 +117,7 @@ export function Hero() {
 
         {/* Stats with glass cards and count-up */}
         <motion.div
-          className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-14"
+          className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-10"
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 1.0 }}
@@ -132,7 +138,7 @@ export function Hero() {
           <MagneticButton>
             <a
               href="/setup"
-              className="inline-flex items-center px-7 py-3.5 rounded-[10px] bg-electric text-bg font-medium hover:bg-electric/90 transition-all hover:shadow-[0_0_30px_rgba(0,212,255,0.4)] text-sm"
+              className="inline-flex items-center px-7 py-3.5 rounded-[10px] bg-electric text-bg font-medium hover:bg-electric/90 hover:shadow-[0_0_30px_rgba(0,212,255,0.4)] text-sm btn-press"
             >
               Get Started
               <svg className="ml-2 w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
@@ -142,8 +148,8 @@ export function Hero() {
           </MagneticButton>
           <MagneticButton>
             <a
-              href="https://github.com/alexhale/gravity-stack"
-              className="inline-flex items-center px-7 py-3.5 rounded-[10px] border border-gs-border text-text hover:border-electric/30 transition-all hover:bg-s1 text-sm"
+              href="https://github.com/7alexhale5-rgb/gravity-stack"
+              className="inline-flex items-center px-7 py-3.5 rounded-[10px] border border-gs-border text-text hover:border-electric/30 hover:bg-s1 text-sm btn-press"
               target="_blank"
               rel="noopener noreferrer"
             >
@@ -161,11 +167,18 @@ export function Hero() {
 
 function StatBlock({ value, label }: { value: number | string; label: string }) {
   return (
-    <div className="glass rounded-[10px] p-5 md:p-6 text-center group hover:border-electric/20 transition-all duration-300 hover:translate-y-[-2px]">
-      <div className="stat-glow font-heading text-3xl md:text-5xl text-electric mb-1">
-        <CountUp target={value} />
+    <div className="glass rounded-[10px] p-5 md:p-6 text-center group hover:border-electric/20 transition-all duration-300 hover:translate-y-[-2px] relative overflow-hidden">
+      <div
+        className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+        style={{ background: "radial-gradient(ellipse at 50% 0%, rgba(0, 212, 255, 0.06), transparent 70%)" }}
+        aria-hidden="true"
+      />
+      <div className="relative">
+        <div className="stat-glow font-heading text-3xl md:text-5xl text-electric mb-2 tracking-tight">
+          <CountUp target={value} />
+        </div>
+        <div className="text-[11px] md:text-xs text-gs-muted uppercase tracking-[0.2em]">{label}</div>
       </div>
-      <div className="text-xs md:text-sm text-dim uppercase tracking-wider">{label}</div>
     </div>
   );
 }

@@ -68,11 +68,11 @@ export default function RootLayout({
       <body
         className={`${spaceGroteskHeading.variable} ${jetBrainsMono.variable} ${spaceGroteskBody.variable} antialiased`}
       >
+        <ParticleNetwork />
         <Nav />
-        <main className="min-h-[calc(100vh-3.5rem)]">{children}</main>
+        <main className="relative z-[2] min-h-[calc(100vh-3.5rem)]">{children}</main>
         <Footer />
         <SearchDialog />
-        <ParticleNetwork />
       </body>
     </html>
   );

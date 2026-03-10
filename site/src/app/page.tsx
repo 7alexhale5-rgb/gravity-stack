@@ -199,7 +199,7 @@ export default function HomePage() {
                 <MagneticButton>
                   <Link
                     href="/setup"
-                    className="inline-flex items-center px-7 py-3.5 rounded-[10px] bg-electric text-bg font-medium hover:bg-electric/90 transition-all hover:shadow-[0_0_30px_rgba(0,255,136,0.4)]"
+                    className="inline-flex items-center px-7 py-3.5 rounded-[10px] bg-electric text-bg font-medium hover:bg-electric/90 hover:shadow-[0_0_30px_rgba(0,255,136,0.4)] btn-press"
                   >
                     Setup Guide
                   </Link>
@@ -207,7 +207,7 @@ export default function HomePage() {
                 <MagneticButton>
                   <Link
                     href="/manifesto"
-                    className="inline-flex items-center px-7 py-3.5 rounded-[10px] border border-gs-border text-text hover:border-electric/30 transition-colors hover:bg-s1"
+                    className="inline-flex items-center px-7 py-3.5 rounded-[10px] border border-gs-border text-text hover:border-electric/30 hover:bg-s1 btn-press"
                   >
                     Read the Manifesto
                   </Link>

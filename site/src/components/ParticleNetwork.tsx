@@ -164,8 +164,11 @@ export function ParticleNetwork() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    // Skip on touch devices and small screens
-    if ("ontouchstart" in window || window.innerWidth < 768) return;
+    // Skip on mobile touch devices and small screens
+    // Note: "ontouchstart" in window returns true on macOS Safari (iPad compat),
+    // so we use media queries for reliable touch detection instead.
+    const isMobileTouch = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+    if (isMobileTouch || window.innerWidth < 768) return;
     // Respect reduced motion preference
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
@@ -180,7 +183,7 @@ export function ParticleNetwork() {
   return (
     <canvas
       ref={canvasRef}
-      className="fixed inset-0 z-0 pointer-events-none"
+      className="fixed inset-0 z-[1] pointer-events-none"
       aria-hidden="true"
     />
   );

@@ -20,12 +20,18 @@ export function ActiveLink({
     <Link
       href={href}
       className={cn(
-        "text-sm transition-colors",
+        "relative text-sm transition-colors py-1",
         isActive ? "text-electric" : "text-dim hover:text-text",
         className
       )}
     >
       {children}
+      {isActive && (
+        <span
+          className="absolute -bottom-[17px] left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-electric shadow-[0_0_6px_rgba(0,255,136,0.6)]"
+          aria-hidden="true"
+        />
+      )}
     </Link>
   );
 }

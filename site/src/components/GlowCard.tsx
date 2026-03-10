@@ -31,9 +31,9 @@ export function GlowCard({
     <div
       ref={ref}
       className={cn(
-        "relative rounded-[10px] p-6 transition-all duration-300 overflow-hidden",
-        "glass bg-s1/60",
-        "hover:border-electric/20 hover:translate-y-[-2px]",
+        "relative rounded-[10px] p-6 overflow-hidden",
+        "glass bg-s1/60 elevation-1 hover-lift",
+        "hover:border-electric/20",
         className
       )}
       onMouseMove={handleMouseMove}
@@ -45,7 +45,7 @@ export function GlowCard({
         className="absolute inset-0 pointer-events-none transition-opacity duration-300 rounded-[10px]"
         style={{
           opacity: isHovered ? 1 : 0,
-          background: `radial-gradient(400px circle at ${glowPosition.x}px ${glowPosition.y}px, ${glowColor}, transparent 60%)`,
+          background: `radial-gradient(280px circle at ${glowPosition.x}px ${glowPosition.y}px, ${glowColor}, transparent 60%)`,
         }}
         aria-hidden="true"
       />

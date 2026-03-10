@@ -74,7 +74,7 @@ export function CodeBlock({
         )}
         <button
           onClick={handleCopy}
-          className="absolute top-3 right-3 text-xs text-dim hover:text-text bg-s2 px-2 py-1 rounded border border-gs-border transition-colors z-10"
+          className={`absolute top-3 right-3 text-xs text-dim hover:text-text bg-s2 px-2 py-1 rounded border border-gs-border transition-all z-10 btn-press ${copied ? "border-electric/40 text-electric shadow-[0_0_10px_rgba(0,255,136,0.15)]" : ""}`}
         >
           {copied ? (
             <svg className="w-3.5 h-3.5 text-electric" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
