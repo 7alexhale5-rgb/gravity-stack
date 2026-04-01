@@ -1,0 +1,8 @@
+- description: "auto-diagram --text generates valid mermaid"
+  vars:
+    subject: "Authentication flow for a Next.js app with Clerk"
+  assert:
+    - type: contains-any
+      value: ["flowchart", "sequenceDiagram", "graph"]
+    - type: llm-rubric
+      value: "Should produce valid Mermaid syntax. Should show the auth flow from user request through middleware to Clerk verification and response."

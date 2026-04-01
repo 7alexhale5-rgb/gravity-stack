@@ -1,0 +1,20 @@
+description: "Golden dataset regression tests for Alex's agent fleet"
+
+providers:
+  - id: anthropic:messages:claude-sonnet-4-20250514
+    config:
+      temperature: 0
+      max_tokens: 1024
+
+tests: "golden/*.yaml"
+
+defaultTest:
+  assert:
+    - type: llm-rubric
+      value: "Output should match the expected behavior described in the test case"
+    - type: not-contains
+      value: "I cannot"
+    - type: not-contains
+      value: "I'm unable"
+
+outputPath: reports/

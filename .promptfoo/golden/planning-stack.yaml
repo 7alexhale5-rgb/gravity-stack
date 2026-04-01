@@ -1,0 +1,17 @@
+- description: "planning-stack generates structured implementation plan"
+  vars:
+    task: "Add user authentication to a Next.js app using Clerk"
+  assert:
+    - type: contains-any
+      value: ["## Implementation", "## Files", "## Steps", "## Plan"]
+    - type: contains-any
+      value: ["middleware", "proxy.ts", "auth", "Clerk"]
+    - type: llm-rubric
+      value: "Plan should include file list, implementation steps, and acceptance criteria. Should mention Clerk middleware setup."
+
+- description: "planning-stack handles trivial task correctly"
+  vars:
+    task: "Fix a typo in README.md"
+  assert:
+    - type: llm-rubric
+      value: "Should recognize this as trivial and either skip planning or produce a minimal plan. Should NOT generate a full multi-step implementation plan."

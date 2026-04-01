@@ -1,0 +1,15 @@
+- description: "review-stack produces structured findings"
+  vars:
+    code_diff: "Added a new API route that reads user input directly into a SQL query"
+  assert:
+    - type: contains-any
+      value: ["SQL injection", "parameterized", "prepared statement", "sanitize"]
+    - type: llm-rubric
+      value: "Should identify SQL injection vulnerability. Should recommend parameterized queries. Should include severity rating."
+
+- description: "review-stack --regression invokes promptfoo"
+  vars:
+    context: "Review after changing the system prompt for the planning agent"
+  assert:
+    - type: llm-rubric
+      value: "Should mention regression testing or golden dataset validation. Should suggest running promptfoo eval to verify prompt changes don't degrade quality."

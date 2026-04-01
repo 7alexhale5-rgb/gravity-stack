@@ -1,0 +1,3 @@
+.promptfoo/reports/
+node_modules/
+.env

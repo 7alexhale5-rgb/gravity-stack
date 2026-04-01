@@ -1,0 +1,17 @@
+- description: "morning-health produces structured dashboard"
+  vars:
+    context: "Run a health check on the Claude Code environment"
+  assert:
+    - type: contains-any
+      value: ["MCP Servers", "Hooks", "Skills", "API Keys", "VPS"]
+    - type: contains-any
+      value: ["HEALTHY", "DEGRADED", "UNHEALTHY"]
+    - type: llm-rubric
+      value: "Should produce a dashboard with pass/fail counts for each category. Should include remediation hints for any failures."
+
+- description: "morning-health handles VPS unreachable gracefully"
+  vars:
+    context: "VPS SSH connection times out during health check"
+  assert:
+    - type: llm-rubric
+      value: "Should mark VPS as unreachable but continue checking other systems. Should NOT crash or skip remaining checks. Should suggest SSH troubleshooting."
