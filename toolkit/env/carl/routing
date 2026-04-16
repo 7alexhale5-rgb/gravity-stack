@@ -1,0 +1,16 @@
+# CARL Routing Domain
+# ====================
+# Model selection guidance for Task tool and agent spawning.
+# Loaded on-demand when model/agent keywords appear in prompt.
+#
+# Format: {DOMAIN}_RULE_{N}=rule text
+
+# ============================================================================
+# ROUTING Domain Rules
+# ============================================================================
+ROUTING_RULE_0=ROUTING rules guide model selection when spawning agents via the Task tool. Advisory, not absolute — user overrides always win.
+ROUTING_RULE_1=HAIKU: Use for fast, low-cost tasks — file searches (scout), simple fixes (quickfix), grep/glob exploration, background parallel agents, boilerplate generation
+ROUTING_RULE_2=SONNET: Use for standard implementation work — feature coding (implementer), code review (reviewer), test writing (tester), research, refactoring
+ROUTING_RULE_3=OPUS: Use for complex, high-stakes work — architecture (architect), deep planning (planner), production debugging (gsd-debugger), security review, multi-file coordination
+ROUTING_RULE_4=DEFAULT: When task complexity is ambiguous, default to sonnet. Escalate to opus only when the task involves architectural decisions, cross-system impact, or production-critical code.
+ROUTING_RULE_5=COST: Prefer haiku for background/parallel agents to minimize spend. A single opus call costs ~10x a haiku call — reserve opus for work that justifies it.

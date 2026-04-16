@@ -1,0 +1,18 @@
+# CARL Opus 4.7 Domain
+# ====================
+# Behavior policy for Claude Opus 4.7 (released 2026-04-16).
+# Loaded on every prompt (ALWAYS_ON=true). Source of truth:
+#   ~/.claude/references/opus-4-7-operating-notes.md
+#
+# Format: {DOMAIN}_RULE_{N}=rule text
+
+# ============================================================================
+# OPUS-4-7 Domain Rules
+# ============================================================================
+OPUS-4-7_RULE_0=MODEL POLICY: When spawning agents or making direct SDK calls, Opus tier = claude-opus-4-7, Sonnet = claude-sonnet-4-6, Haiku = claude-haiku-4-5. No aliases in production-critical paths.
+OPUS-4-7_RULE_1=EFFORT POLICY: Global default is high. For deep-reasoning skills (/planning-stack --deep, /research-stack --deep, /build-stack, /design-stack --generate|--critique, /brainstorm-stack, /gsd:debug, /review-stack) set xhigh explicitly when invoking Opus 4.7 via Messages API.
+OPUS-4-7_RULE_2=THINKING POLICY: On Opus 4.7, {type:"enabled", budget_tokens:N} returns 400. Use {type:"adaptive"} with effort as the depth lever. Default display=omitted; set "summarized" only when a skill surfaces reasoning to the user.
+OPUS-4-7_RULE_3=SAMPLING POLICY: Never pass temperature / top_p / top_k on Opus 4.7 (non-default returns 400). Guide via prompting only.
+OPUS-4-7_RULE_4=TOKENIZER POLICY: Opus 4.7 tokenizer yields 1.0-1.35x more tokens per input. Add >=35% headroom to max_tokens vs pre-4.7 defaults. Minimum 64k at xhigh/max.
+OPUS-4-7_RULE_5=PREFILL POLICY: No assistant-message prefills on Opus 4.7. Use structured outputs or system instructions instead.
+OPUS-4-7_RULE_6=SCAFFOLDING POLICY: Opus 4.7 ships built-in progress updates and calibrated response length. Do not add "after every N tool calls report progress" or global "be concise" scaffolding -- let the model calibrate. When found in existing prompts, strip only if clearly redundant.

@@ -1,0 +1,20 @@
+# CARL Global Domain
+# ===================
+# Universal rules that apply to all sessions.
+# Keep this lean - domain-specific rules belong in their own files.
+#
+# Format: {DOMAIN}_RULE_{N}=rule text
+
+# Trimmed 2026-04-08: removed rule 0 (pure metadata), rules 5+6 (duplicates of CLAUDE.md Behavioral Rules).
+# CLAUDE.md is the canonical source for those — loaded once per session via global discovery.
+# Numbering preserved (gaps OK) so future renumbering doesn't drift.
+GLOBAL_RULE_1=Use absolute paths in all programming to prevent path traversal issues
+GLOBAL_RULE_2=Use relative paths when referencing files to the user for clickable navigation
+GLOBAL_RULE_3=Batch tool calls when possible - sequential only when there are dependencies
+GLOBAL_RULE_4=NEVER mark tasks complete without validating functionality - test everything, require proof
+GLOBAL_RULE_7=Keep changes minimal and focused - only modify what's directly requested
+GLOBAL_RULE_8=Avoid over-engineering - don't add features, abstractions, or improvements beyond what was asked
+GLOBAL_RULE_9=PLANNING ROUTER: Non-trivial tasks (multi-file, new feature, architecture, refactor) MUST invoke /planning-stack before writing code. Always runs at --deep depth (no shallow/default). Architecture tasks add --tech flag.
+GLOBAL_RULE_10=PLANNING ROUTER: Trivial tasks (single-file fix, typo, config tweak, <10 LOC) skip planning entirely - just implement
+GLOBAL_RULE_11=PLANNING ROUTER: When context is DEPLETED (<40% remaining), use /plan (ecc:plan) instead of /planning-stack to isolate planning in a subagent and protect the main context window
+GLOBAL_RULE_12=PLANNING ROUTER: If .planning/ directory with ROADMAP.md exists in cwd, suggest phase-aware commands (/plan-phase, /verify-phase, /next-phase, /project-progress) alongside /planning-stack
