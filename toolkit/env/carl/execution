@@ -1,0 +1,21 @@
+# CARL Execution Domain
+# =====================
+# Routes to build-stack after planning completes.
+# Loaded on-demand when execution/build keywords appear.
+#
+# Format: {DOMAIN}_RULE_{N}=rule text
+
+# ============================================================================
+# EXECUTION Domain Rules
+# ============================================================================
+EXECUTION_RULE_0=EXECUTION rules guide build-phase workflow after planning completes. Advisory — user can skip.
+EXECUTION_RULE_1=After /planning-stack or /plan completes and produces a plan, suggest /build-stack to begin structured execution with interleaved verification
+EXECUTION_RULE_2=During implementation, if context bracket reaches DEPLETED (<40%), stop building and generate a handoff doc with remaining tasks and current verification state before continuing
+EXECUTION_RULE_3=When user says "build this", "implement", "start coding", or "execute the plan" and a plan exists in conversation or .planning/, suggest /build-stack
+EXECUTION_RULE_4=After /review-stack completes with SHIP IT or FIX THEN SHIP verdict, suggest /simplify for a cleanup pass, then /commit to finalize the work
+EXECUTION_RULE_5=After /commit completes, suggest /ship to sync with base, run tests, push, and open PR
+EXECUTION_RULE_6=After /ship completes, suggest /compound to document learnings and feed forward into future planning cycles
+EXECUTION_RULE_7=During /build-stack, if implementing new functionality (not config/docs), suggest ecc:search-first to check if an existing library handles it before writing custom code
+EXECUTION_RULE_8=CLOSEOUT: After /review-stack returns SHIP IT AND /commit completes, suggest /closeout-stack --mode=ship as the final step (handles ship + save + handoff + compound + resume prompt in one pipeline)
+EXECUTION_RULE_9=CLOSEOUT: When user says "wrap up", "close out", "end of session", "end of day", "pivot context", "clearing to continue", or types the manual chain "/sc → /handoff → /compound" (or any subset), suggest /closeout-stack with mode auto-detected
+EXECUTION_RULE_10=CLOSEOUT: /closeout-stack REPLACES the manual chain of /sc + /handoff + /compound + /ship + /commit for end-of-session work. When closeout applies, do not suggest those individually — suggest /closeout-stack instead

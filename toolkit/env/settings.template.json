@@ -1,0 +1,315 @@
+{
+  "cleanupPeriodDays": 14,
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/pytest -q)",
+      "Bash(.venv/bin/pytest:*)",
+      "Bash(curl:*)",
+      "Bash(gemini -m gemini-2.5-flash -p \"Research thoroughly with citations and URLs: Best practices for naming B2B SaaS products in the legal tech / contract management / CLM space. Cover: 1\\) Naming frameworks \\(descriptive vs abstract vs metaphor vs compound\\), 2\\) What makes legal tech names successful - analyze existing names: Catelyx, Dioptra, Sirion, Zuva, Kira Systems, Agiloft, Icertis, DocuSign, Ironclad, LinkSquares, ContractPodAi, Evisort, Luminance, LegalSifter, Juro, SpotDraft, Precisely, Lexion, Onit. 3\\) B2B naming best practices from branding experts, 4\\) Domain availability considerations in 2026, 5\\) Whether action-oriented names like ''RipKit'' work in enterprise B2B legal tech, 6\\) Trademark screening basics. Be exhaustive with specific examples, citations, and expert quotes.\")",
+      "Bash(git *)",
+      "Bash(ls:*)",
+      "Bash(npm *)",
+      "Bash(npm -C web run build)",
+      "Bash(npm run build:*)",
+      "Bash(npx playwright test e2e/phase3-qc-workflow.spec.ts --reporter=list)",
+      "Bash(python3:*)",
+      "Bash(worker/.venv/bin/python -c \":*)",
+      "Read(~/.claude/**)",
+      "WebFetch(domain:www.clarityqst.com)",
+      "mcp__pencil",
+      "mcp__plugin_playwright_playwright__browser_click",
+      "mcp__plugin_playwright_playwright__browser_snapshot",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot"
+    ],
+    "defaultMode": "auto",
+    "additionalDirectories": []
+  },
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "osascript -e 'display notification \"Claude needs input\" with title \"Claude Code\" sound name \"Ping\"'"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/extract_memories.py",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/precompact-snapshot.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import json, sys; data=json.load(sys.stdin); path=data.get('tool_input',{}).get('file_path',''); sys.exit(2 if any(p in path for p in ['.env', 'package-lock.json', '.git/', 'supabase/migrations/']) else 0)\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/block-destructive.sh"
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/commit-gate.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/posttooluse-lint.py",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/sense-1-sight.js",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/sense-5-rhythm.js",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/design-decision-autosave.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/closeout-telemetry.py",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '=== Git Status ===' && git status --short 2>/dev/null || echo 'Not a git repo'; echo ''; echo '=== Open Issues ===' && gh issue list --limit 5 2>/dev/null || echo 'gh not available'"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash # ~/your-scripts/usage-reminder.sh  (example; wire your own)"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/auto-instinct.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/carl-hook.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/design-focus-redirect.py",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/closeout-resume-guard.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/skills/1pct-moves-only/hooks/1pct-check.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/log-event.sh PermissionDenied",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/log-event.sh StopFailure",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "CwdChanged": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/log-event.sh CwdChanged",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "FileChanged": [
+      {
+        "matcher": ".env|.envrc",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/log-event.sh FileChanged",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "TaskCreated": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/log-event.sh TaskCreated",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh"
+  },
+  "enabledPlugins": {
+    "everything-claude-code@everything-claude-code": true,
+    "context7@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "claude-code-setup@claude-plugins-official": true,
+    "coderabbit@claude-plugins-official": true,
+    "firecrawl@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true,
+    "qodo-skills@claude-plugins-official": true,
+    "shiploop@7alexhale5-rgb/shiploop": true,
+    "4d-senses@4d-senses-marketplace": true,
+    "telegram@claude-plugins-official": true,
+    "figma@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {},
+  "effortLevel": "xhigh",
+  "mcpServers": {
+    "firecrawl": {
+      "command": "npm",
+      "args": [
+        "exec",
+        "firecrawl-mcp@3.9.0"
+      ]
+    },
+    "hacker-news": {
+      "command": "npm",
+      "args": [
+        "exec",
+        "hn-mcp@1.0.0"
+      ]
+    },
+    "perplexity": {
+      "command": "npm",
+      "args": [
+        "exec",
+        "@perplexity-ai/mcp-server@0.8.2"
+      ]
+    },
+    "memory": {
+      "command": "npm",
+      "args": [
+        "exec",
+        "@modelcontextprotocol/server-memory@2026.1.26",
+        "--file",
+        "~/.claude/memory/graph.json"
+      ]
+    },
+    "playwright": {
+      "command": "npm",
+      "args": [
+        "exec",
+        "@playwright/mcp@0.0.68"
+      ]
+    },
+    "vercel": {
+      "type": "http",
+      "url": "https://mcp.vercel.com"
+    },
+    "claude-mermaid": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "claude-mermaid@1.6.2"
+      ]
+    }
+  }
+}
