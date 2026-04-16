@@ -1,5 +1,11 @@
 # Gravity Stack
 
+## Opus 4.7 Operating Notes
+
+This project operates on Claude Opus 4.7 (released 2026-04-16). Behavior: adaptive-only thinking, literal instruction-following, calibrated response length, no `temperature`/`top_p`/`top_k`. Full reference: `~/.claude/references/opus-4-7-operating-notes.md` (canonical copy mirrored into this repo at `toolkit/env/references/opus-4-7-operating-notes.md`).
+
+For the standalone Opus 4.7 migration kit, see the companion repo at `https://github.com/7alexhale5-rgb/opus-4-7-playbook`.
+
 ## Overview
 Open-source documentation site + setup toolkit for AI-native development environments.
 
