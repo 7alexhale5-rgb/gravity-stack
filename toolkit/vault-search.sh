@@ -1,6 +1,13 @@
 #!/bin/bash
-# vault-search.sh — Fast memory vault search with frontmatter-aware filtering
+# vault-search.sh — Fast knowledge-vault search with frontmatter-aware filtering
 # 3-layer pattern: search → filter → fetch
+# Works over one or more Obsidian-style vaults.
+#
+# Configure by setting GRAVITY_VAULTS to a colon-separated list of directories
+# before invoking, e.g.:
+#   export GRAVITY_VAULTS="$HOME/vault:$HOME/research"
+# Defaults scan "$HOME/vault" only if the env var is unset.
+#
 # Usage:
 #   vault-search.sh search "query" [--type=TYPE] [--project=PROJECT] [--since=DAYS] [--limit=N]
 #   vault-search.sh timeline "query" [--before=N] [--after=N]
@@ -9,8 +16,9 @@
 
 set -uo pipefail
 
-VAULT_DIR="$HOME/Projects/memory-vault"
-RESEARCH_DIR="$HOME/Projects/research-vault"
+# Colon-separated vault paths; override via GRAVITY_VAULTS env var
+VAULT_LIST="${GRAVITY_VAULTS:-$HOME/vault}"
+IFS=':' read -ra VAULT_DIRS <<< "$VAULT_LIST"
 INDEX_FILE="$HOME/.claude/vault-search-index.tsv"
 INDEX_MAX_AGE=86400  # 24 hours
 
@@ -20,7 +28,7 @@ build_index() {
   local id=1
   > "$INDEX_FILE"  # truncate
 
-  for vault in "$VAULT_DIR" "$RESEARCH_DIR"; do
+  for vault in "${VAULT_DIRS[@]}"; do
     [ -d "$vault" ] || continue
     while IFS= read -r file; do
       # Extract frontmatter fields
@@ -107,7 +115,7 @@ cmd_search() {
 
     # Also grep file content and merge by ID
     local content_matches=""
-    content_matches=$(grep -rlE -i "$pattern" "$VAULT_DIR" "$RESEARCH_DIR" 2>/dev/null \
+    content_matches=$(grep -rlE -i "$pattern" "${VAULT_DIRS[@]}" 2>/dev/null \
       | grep '\.md$' \
       | grep -v '.obsidian' \
       | grep -v 'CLAUDE.md' || true)
