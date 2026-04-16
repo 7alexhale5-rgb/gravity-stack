@@ -1,0 +1,16 @@
+name: sanitization
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run sanitization test
+        run: bash tests/test_sanitization.sh

@@ -11,7 +11,7 @@
 
 - description: "morning-health handles VPS unreachable gracefully"
   vars:
-    context: "VPS at 167.71.113.40 SSH connection times out during health check"
+    context: "VPS at EXAMPLE.VPS.HOST.IP SSH connection times out during health check"
   assert:
     - type: llm-rubric
       value: "Should mark VPS as UNHEALTHY but continue checking other systems. Should suggest SSH troubleshooting."

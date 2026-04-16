@@ -1,0 +1,36 @@
+# Patterns that must never appear in the public repo.
+# Lines starting with # are comments. Empty lines ignored.
+
+# VPS IPs from the source environment
+167\.71\.113\.40
+178\.156\.226\.50
+5\.161\.86\.106
+
+# Private filesystem paths (use ~/ in docs instead of absolute)
+/Users/alexhale
+alexhale@
+
+# Private project codenames
+\byehovah\b
+\bkoho\b
+\bmike-lawdbot\b
+\bopenclaw\b
+\bpaperclip\b
+\bsportsbook-edge\b
+\badvisory-board\b
+\bprettyfly-audit-engine\b
+\bevansville-tonight\b
+\bctox\b
+\blocal-ai-kit\b
+\bgravity-claw\b
+\bmission-control\b
+\bmemory-vault\b
+\bresearch-vault\b
+
+# Credentials — patterns tuned to catch real keys, not obvious placeholders
+# (sk-ant-<real>, pplx-<real>, etc.). Placeholders like "pplx-your-key-here"
+# stay legible in docs; a 20+ char random body means it's a real leak.
+sk-ant-[A-Za-z0-9_-]{20,}
+pplx-[A-Za-z0-9]{20,}
+ghp_[A-Za-z0-9]{20,}
+xoxb-[0-9]{6,}-[A-Za-z0-9]{20,}
