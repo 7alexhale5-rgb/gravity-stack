@@ -1,6 +1,8 @@
 # CARL
 
-CARL (Context-Aware Rule Layer) is a 1,073-line Python governance engine that monitors Claude Code's context window and dynamically adjusts its behavior. It runs on every user prompt via the `UserPromptSubmit` hook, measuring how much context remains and injecting rules that match the current situation.
+> **Canonical domain files:** [`../toolkit/env/carl/`](../toolkit/env/carl/). 6 active domains: `global`, `context`, `routing`, `execution`, `commands`, `opus-4-7`.
+
+CARL (Context-Aware Rule Layer) is a Python governance engine (~1,700 lines) that monitors Claude Code's context window and dynamically adjusts its behavior. It runs on every user prompt via the `UserPromptSubmit` hook, measuring how much context remains and injecting rules that match the current situation.
 
 Without CARL, Claude Code has no awareness of its own context limits. It will attempt ambitious multi-file refactors with 10% context remaining, then fail mid-task. CARL prevents this by enforcing governance brackets that match behavior to available resources.
 

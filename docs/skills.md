@@ -1,6 +1,8 @@
 # Skills
 
-Skills are slash-command workflows that Claude Code executes on demand. Each skill is a structured prompt template that guides Claude through a specific task with best practices baked in. Gravity Stack includes 53 skills across 12 categories.
+> **Full catalog:** [`../toolkit/env/skills-catalog.md`](../toolkit/env/skills-catalog.md).
+
+Skills are slash-command workflows that Claude Code executes on demand. Each skill is a structured prompt template that guides Claude through a specific task with best practices baked in. Gravity Stack ships **78 first-class skills** across 14 categories, plus ~100 more provided by installed plugins. Full inventory: [`toolkit/env/skills-catalog.md`](../toolkit/env/skills-catalog.md).
 
 Invoke a skill by typing its name with a `/` prefix:
 ```

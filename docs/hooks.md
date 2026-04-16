@@ -1,5 +1,7 @@
 # Hooks
 
+> **Canonical hook sources:** [`../toolkit/env/hooks/`](../toolkit/env/hooks/). 20 lifecycle hooks covering CARL injection, 4D senses, commit gates, closeout guards, media auto-vision, design decision capture.
+
 Hooks are event-driven scripts that run automatically at specific points in a Claude Code session. They let you enforce rules, automate tasks, and inject context without manual intervention. Hooks are configured in `~/.claude/settings.json` under the `hooks` key.
 
 ## Hook Events
