@@ -1,3 +1,37 @@
 .promptfoo/reports/
 node_modules/
 .env
+.env.local
+
+# Tool caches (never commit)
+.serena/
+.playwright-mcp/
+
+# Local build artifacts
+site/.next/
+site/out/
+dist/
+
+# Site E2E screenshot output (per-run artifacts, not docs)
+e2e-*.png
+home-full.png
+plugins-page.png
+skills-page.png
+
+# Local design review exports
+design-review.html
+
+# Python tooling
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# Private working copy of the env audit (public redacted copy lives in docs/)
+ENVIRONMENT-AUDIT-2026-03-27.md
+
+# Private workflow routines (project-specific, not shareable)
+routines/
+
+# Promptfoo run outputs
+reports/

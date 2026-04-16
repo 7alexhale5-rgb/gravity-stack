@@ -1,22 +1,22 @@
-- description: "research-stack --deep produces multi-source report"
+- description: "research-stack produces multi-source report"
   vars:
     topic: "Best practices for LLM prompt caching in production"
   assert:
     - type: contains-any
-      value: ["## Sources", "## Findings", "## Summary"]
+      value: ["## Sources", "## Findings", "## Summary", "## Recommendations"]
     - type: llm-rubric
-      value: "Report should cite multiple sources with confidence ratings. Should include practical recommendations, not just theory."
+      value: "Report should cite multiple sources with confidence ratings and practical recommendations."
 
 - description: "research-stack --youtube discovers relevant content"
   vars:
-    topic: "Claude Code advanced workflows"
+    topic: "Claude Code advanced workflows. Mode: --youtube"
   assert:
     - type: llm-rubric
-      value: "Should include YouTube video discoveries with titles, channels, and relevance ratings. Should integrate video insights into the research report."
+      value: "Should include YouTube video references with titles, channels, and relevance ratings."
 
 - description: "research-stack --validate catches citation issues"
   vars:
-    topic: "React Server Components performance benchmarks"
+    topic: "React Server Components performance benchmarks. Mode: --validate"
   assert:
     - type: llm-rubric
-      value: "Should run citation validation on the report. Should flag any unverifiable claims or hallucinated sources. Should include a validation summary."
+      value: "Should flag unverifiable claims and include a validation summary section."

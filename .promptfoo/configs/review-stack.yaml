@@ -1,14 +1,14 @@
-description: "Golden dataset — Planning Stack"
+description: "Golden dataset — Review Stack"
 providers:
   - id: anthropic:messages:claude-sonnet-4-20250514
     config:
       temperature: 0
       max_tokens: 2048
 prompts:
-  - file://prompts/planning-stack.txt
-tests: "golden/planning-stack.yaml"
+  - file://../prompts/review-stack.txt
+tests: "../golden/review-stack.yaml"
 defaultTest:
   assert:
     - type: not-contains
       value: "I cannot"
-outputPath: reports/planning-stack-latest.json
+outputPath: ../reports/review-stack-latest.json

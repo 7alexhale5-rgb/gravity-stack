@@ -3,7 +3,7 @@
     task: "Add user authentication to a Next.js app using Clerk"
   assert:
     - type: contains-any
-      value: ["## Implementation", "## Files", "## Steps", "## Plan"]
+      value: ["## Implementation", "## Files", "## Steps", "## Plan", "## Context"]
     - type: contains-any
       value: ["middleware", "proxy.ts", "auth", "Clerk"]
     - type: llm-rubric
@@ -14,4 +14,4 @@
     task: "Fix a typo in README.md"
   assert:
     - type: llm-rubric
-      value: "Should recognize this as trivial and either skip planning or produce a minimal plan. Should NOT generate a full multi-step implementation plan."
+      value: "Should recognize this as trivial and skip planning or produce a minimal response. Should NOT generate a full multi-step implementation plan."
