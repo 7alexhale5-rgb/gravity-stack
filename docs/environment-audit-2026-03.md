@@ -1,3 +1,5 @@
+> Historical (2026-04). Current models: see README.
+
 # Gravity Stack — Full Environment Audit
 > **Generated:** 2026-03-27 | **By:** the author & Claude
 > **Purpose:** Complete map of AI-native development environment for peer comparison

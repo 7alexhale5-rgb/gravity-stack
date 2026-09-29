@@ -5,11 +5,17 @@
 #   ~/.claude/references/opus-4-7-operating-notes.md
 #
 # Format: {DOMAIN}_RULE_{N}=rule text
+#
+# Successor note (2026-09-29): Opus 4.7 is now a legacy model. The current
+# lineup is Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 4.5 (see README).
+# RULE_0 below names the current model IDs. RULES 1-6 describe Opus 4.7 and
+# are kept as written; no Opus 5.5 rules are added here until they can be
+# sourced from Anthropic's docs.
 
 # ============================================================================
 # OPUS-4-7 Domain Rules
 # ============================================================================
-OPUS-4-7_RULE_0=MODEL POLICY: When spawning agents or making direct SDK calls, Opus tier = claude-opus-4-7, Sonnet = claude-sonnet-4-6, Haiku = claude-haiku-4-5. No aliases in production-critical paths.
+OPUS-4-7_RULE_0=MODEL POLICY: When spawning agents or making direct SDK calls, Opus tier = claude-opus-5-5, Sonnet = claude-sonnet-5-5, Haiku = claude-haiku-4-5. Hardest reasoning and long agentic work = claude-fable-5-1. No aliases in production-critical paths.
 OPUS-4-7_RULE_1=EFFORT POLICY: Global default is high. For deep-reasoning skills (/planning-stack --deep, /research-stack --deep, /build-stack, /design-stack --generate|--critique, /brainstorm-stack, /gsd:debug, /review-stack) set xhigh explicitly when invoking Opus 4.7 via Messages API.
 OPUS-4-7_RULE_2=THINKING POLICY: On Opus 4.7, {type:"enabled", budget_tokens:N} returns 400. Use {type:"adaptive"} with effort as the depth lever. Default display=omitted; set "summarized" only when a skill surfaces reasoning to the user.
 OPUS-4-7_RULE_3=SAMPLING POLICY: Never pass temperature / top_p / top_k on Opus 4.7 (non-default returns 400). Guide via prompting only.

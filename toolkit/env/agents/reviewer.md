@@ -3,7 +3,7 @@ name: reviewer
 description: Code review agent for quality, security, and standards compliance
 tools: Read, Glob, Grep
 disallowedTools: Write, Edit, Bash
-model: claude-opus-4-7
+model: claude-opus-5-5
 memory: project
 maxTurns: 20
 ---

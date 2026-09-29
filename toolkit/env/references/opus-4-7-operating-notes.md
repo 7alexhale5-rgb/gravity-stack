@@ -1,3 +1,5 @@
+> Historical (2026-04). Current models: see README.
+
 # Opus 4.7 Operating Notes
 
 **Source of truth** — referenced from `~/.claude/CLAUDE.md`, `~/CLAUDE.md`, `~/.carl/opus-4-7`, and per-project CLAUDE.md files. Update this file when a new Claude model ships; pointers stay stable.
