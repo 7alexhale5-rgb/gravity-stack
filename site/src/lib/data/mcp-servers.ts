@@ -43,7 +43,7 @@ export const mcpServers: MCPServer[] = [
     priority: "optional",
     apiKeyRequired: false,
     description: "Graph-based entity memory. Stores relationships between concepts in a local JSON file. Good for session-level knowledge.",
-    config: { command: "npm", args: ["exec", "@modelcontextprotocol/server-memory@2026.1.26", "--file", "$HOME/.claude/memory/graph.json"] },
+    config: { command: "npm", args: ["exec", "@modelcontextprotocol/server-memory@2026.1.26"], env: { MEMORY_FILE_PATH: "${HOME}/.claude/memory/graph.json" } },
   },
   {
     name: "Hacker News",

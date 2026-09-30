@@ -3,7 +3,6 @@ import { Card } from "@/components/Card";
 import { Badge } from "@/components/Badge";
 import { PageHeader } from "@/components/PageHeader";
 import { ScrollReveal } from "@/components/ScrollReveal";
-import { SectionDivider } from "@/components/SectionDivider";
 
 export const metadata = {
   title: "Skills",
