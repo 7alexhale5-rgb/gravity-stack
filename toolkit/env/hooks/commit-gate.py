@@ -1,38 +1,76 @@
 #!/usr/bin/env python3
-"""
-Claude Code commit-gate hook (PreToolUse on Bash).
-Blocks git commits in TypeScript projects if tsc --noEmit fails.
-Exit 0 = allow, Exit 2 = block.
-"""
-import json, sys, subprocess, os
+"""Claude PreToolUse hook: block commits when TypeScript checking cannot pass."""
+
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+
+
+def commit_directory(command, base):
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return None
+    for index, word in enumerate(words):
+        if word != "git":
+            continue
+        directory = base
+        position = index + 1
+        while position < len(words):
+            flag = words[position]
+            if flag in ("-C", "-c", "--git-dir", "--work-tree"):
+                if position + 1 >= len(words):
+                    return None
+                if flag == "-C":
+                    directory = (directory / words[position + 1]).resolve()
+                position += 2
+            elif flag.startswith("-C") and len(flag) > 2:
+                directory = (directory / flag[2:]).resolve()
+                position += 1
+            elif flag.startswith(("-c", "--git-dir=", "--work-tree=")):
+                position += 1
+            else:
+                break
+        if position < len(words) and words[position] == "commit":
+            return directory
+    return None
+
 
 try:
-    raw = sys.stdin.read()
-    if not raw.strip():
-        sys.exit(0)
-    data = json.loads(raw)
-except (json.JSONDecodeError, ValueError, OSError):
+    payload = json.load(sys.stdin)
+    tool = payload.get("tool_input", {})
+    base = Path(payload.get("cwd") or tool.get("cwd") or os.getcwd()).resolve()
+    directory = commit_directory(tool.get("command", ""), base)
+except (ValueError, TypeError, OSError, AttributeError):
     sys.exit(0)
 
-cmd = data.get('tool_input', {}).get('command', '')
-
-if 'git commit' not in cmd:
+if directory is None or not (directory / "tsconfig.json").is_file():
     sys.exit(0)
 
-if not (os.path.exists('tsconfig.json') or os.path.exists('package.json')):
-    sys.exit(0)
-
-if os.path.exists('tsconfig.json'):
-    result = subprocess.run(
-        ['npx', 'tsc', '--noEmit'],
-        capture_output=True, text=True, timeout=60
+try:
+    check = subprocess.run(
+        ["npx", "tsc", "--noEmit"],
+        cwd=str(directory),
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
-    if result.returncode != 0:
-        # tsc writes errors to stdout; filter out .next/dev/types (stale route cache)
-        errors = [l for l in result.stdout.splitlines() if 'error TS' in l and '.next/dev/types' not in l]
-        if errors:
-            print(f"COMMIT BLOCKED: {len(errors)} TypeScript error(s):\n" + "\n".join(errors[:10]), file=sys.stderr)
-            sys.exit(2)
-        # Only .next/dev/types errors — allow (they regenerate on next dev)
+    if check.returncode != 0:
+        detail = (check.stderr or check.stdout).strip()[:1000]
+        print(
+            "COMMIT BLOCKED: TypeScript check failed"
+            + (":\n" + detail if detail else ""),
+            file=sys.stderr,
+        )
+        sys.exit(2)
+except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError) as error:
+    print(
+        f"COMMIT BLOCKED: TypeScript check unavailable ({type(error).__name__})",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 sys.exit(0)

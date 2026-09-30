@@ -3,14 +3,15 @@
 Shared Groq API client for Gravity Stack hooks/scripts.
 Single source of truth for API key loading and LLM calls.
 """
+
 from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 DEFAULT_MODEL = "moonshotai/kimi-k2-instruct-0905"
 DEFAULT_TIMEOUT = 15
@@ -32,8 +33,9 @@ def _load_api_key() -> str:
             if stripped.startswith("export GROQ_API_KEY="):
                 value = stripped.split("=", 1)[1].strip()
                 # Remove surrounding quotes
-                if (value.startswith('"') and value.endswith('"')) or \
-                   (value.startswith("'") and value.endswith("'")):
+                if (value.startswith('"') and value.endswith('"')) or (
+                    value.startswith("'") and value.endswith("'")
+                ):
                     value = value[1:-1]
                 return value
     except Exception:
@@ -62,7 +64,7 @@ def call_groq(
     """Call Groq API. Returns parsed JSON dict or None on failure.
 
     Uses direct file parsing for API key (no eval/shell injection).
-    Uses curl subprocess with key via stdin-safe argument passing.
+    Sends the key and prompt in the HTTPS request, never process arguments.
     Validates response structure before returning.
     """
     api_key = _load_api_key()
@@ -80,24 +82,21 @@ def call_groq(
         payload["response_format"] = {"type": "json_object"}
 
     try:
-        result = subprocess.run(
-            ["curl", "-s", "--max-time", str(timeout),
-             "https://api.groq.com/openai/v1/chat/completions",
-             "-H", f"Authorization: Bearer {api_key}",
-             "-H", "Content-Type: application/json",
-             "-d", json.dumps(payload)],
-            capture_output=True, text=True, timeout=timeout + 5,
+        request = Request(
+            "https://api.groq.com/openai/v1/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
         )
-
-        if result.returncode != 0:
-            log_failure(f"curl_exit_{result.returncode}")
-            return None
-
-        response = json.loads(result.stdout)
+        with urlopen(request, timeout=timeout) as result:
+            response = json.load(result)
 
         # Validate response structure (OWASP A03 mitigation)
         if not isinstance(response, dict) or "choices" not in response:
-            log_failure(f"invalid_response_structure: {result.stdout[:200]}")
+            log_failure("invalid_response_structure")
             return None
 
         choices = response.get("choices", [])
@@ -112,12 +111,15 @@ def call_groq(
 
         return json.loads(content)
 
-    except json.JSONDecodeError as e:
-        log_failure(f"json_decode_error: {e}")
+    except json.JSONDecodeError:
+        log_failure("json_decode_error")
         return None
-    except subprocess.TimeoutExpired:
-        log_failure("timeout")
+    except HTTPError as error:
+        log_failure(f"http_status_{error.code}")
         return None
-    except Exception as e:
-        log_failure(f"unexpected: {type(e).__name__}: {e}")
+    except URLError:
+        log_failure("network_error")
+        return None
+    except Exception as error:
+        log_failure(f"unexpected_{type(error).__name__}")
         return None

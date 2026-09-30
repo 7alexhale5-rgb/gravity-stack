@@ -14,5 +14,5 @@ else
   echo -e "  ${GREEN}✓${NC} Installed commit-gate.py"
 fi
 
-echo -e "  ${GREEN}✓${NC} Hooks configured in settings.json"
-echo "  Hook events: Notification, PreCompact, PreToolUse (x2), PostToolUse, SessionStart, UserPromptSubmit"
+echo "  Commit gate file installed. Phase 5 checks its settings registration."
+echo "  Existing settings are preserved; optional agents, CARL and other hooks require manual setup."

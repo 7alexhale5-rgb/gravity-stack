@@ -6,7 +6,9 @@ Model Context Protocol (MCP) servers give Claude Code access to external tools a
 
 An MCP server exposes **tools** (functions Claude can call) and **resources** (data Claude can read). When you configure an MCP server, Claude Code launches it as a subprocess or connects to it over the network. The server handles authentication, API calls, and data formatting, presenting a clean interface to Claude.
 
-MCP servers are configured in `~/.claude/settings.json` under the `mcpServers` key.
+Register servers with `claude mcp add --scope user`; Claude stores user registrations in `~/.claude.json`. Project registrations belong in `.mcp.json`, not `settings.json`. The JSON snippets below are server blocks for `.mcp.json`; review project approvals before loading them. See the [official MCP guide](https://code.claude.com/docs/en/mcp).
+
+The installer registers five servers and preserves any existing names. Registration, connection and a successful tool call are separate checks. API-key presence alone does not prove access.
 
 ## npm Servers
 
@@ -21,7 +23,7 @@ Browser automation for testing and web interaction.
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["@anthropic/mcp-playwright"]
+      "args": ["-y", "@playwright/mcp@0.0.68"]
     }
   }
 }
@@ -290,7 +292,7 @@ Here is a complete `mcpServers` block with all 10 servers:
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["@anthropic/mcp-playwright"]
+      "args": ["-y", "@playwright/mcp@0.0.68"]
     },
     "firecrawl": {
       "command": "npx",
@@ -411,7 +413,7 @@ await server.connect(transport);
 
 ### Register Your Server
 
-Add it to `settings.json`:
+Add it to the project `.mcp.json`, or register its absolute executable path with `claude mcp add --scope user`:
 
 ```json
 {
@@ -431,3 +433,17 @@ Add it to `settings.json`:
 - **Handle errors gracefully**: Return error messages, do not throw unhandled exceptions.
 - **Add descriptions**: Tool and parameter descriptions help Claude use them correctly.
 - **Test locally**: Run your server with `npx @modelcontextprotocol/inspector` to test tools interactively.
+
+
+## Optional OpenAI documentation
+
+The public [OpenAI Docs MCP](https://developers.openai.com/learn/docs-mcp) exposes documentation
+search and page fetching. It does not call the paid OpenAI API. Enable its registration with
+`GRAVITY_INSTALL_OPENAI_DOCS=1 bash toolkit/install.sh`, or add it explicitly:
+
+```bash
+claude mcp add --scope user --transport http openai-docs https://developers.openai.com/mcp
+```
+
+Preserve an existing carrier instead of registering the same server twice. Use a search and
+fetch call to prove it works. This connector is optional and does not choose your model.
