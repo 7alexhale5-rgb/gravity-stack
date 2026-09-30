@@ -7,12 +7,13 @@
 
 ## Process
 
-1. Run `python3 -m unittest discover -s tests -p test_installer.py`.
-2. Run `bash tests/test_sanitization.sh` before publishing.
+1. Run `python3 -m unittest discover -s tests -p 'test_*.py'`.
+2. Run the generic scan and the external private profile on the exact release commit.
 3. Installer tests isolate the home and stub system setup and network calls.
 
 ## Outputs
 
+- `tests/test_sanitization.py`: external-profile path, EOF, error and output regression tests.
 - `tests/test_installer.py`: regression tests for optional process-skill installation.
 - `tests/test_sanitization.sh` and `tests/sanitization-patterns.txt`: public safety checks.
 

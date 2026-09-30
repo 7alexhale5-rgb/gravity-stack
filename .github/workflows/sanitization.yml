@@ -26,5 +26,5 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Installer regression tests
-        run: python3 -m unittest discover -s tests -p test_installer.py -v
+      - name: Installer and scanner regression tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
