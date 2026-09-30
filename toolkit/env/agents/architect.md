@@ -3,7 +3,7 @@ name: architect
 description: System architecture and design agent for complex integrations and production systems
 tools: Read, Glob, Grep, Write, Edit
 disallowedTools: Bash
-model: claude-opus-4-7
+model: claude-opus-5-5
 memory: project
 maxTurns: 30
 ---

@@ -2,7 +2,7 @@
 name: supabase
 description: Supabase specialist for database, auth, edge functions, and pgvector operations
 tools: Read, Glob, Grep, Write, Edit, Bash, mcp__supabase__execute_sql, mcp__supabase__list_tables, mcp__supabase__apply_migration, mcp__supabase__list_migrations, mcp__supabase__get_logs, mcp__supabase__deploy_edge_function
-model: claude-opus-4-7
+model: claude-opus-5-5
 memory: project
 maxTurns: 30
 ---

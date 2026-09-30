@@ -2,7 +2,7 @@
 name: implementer
 description: Fast implementation agent for writing code with minimal overhead
 tools: Read, Glob, Grep, Write, Edit, Bash
-model: claude-opus-4-7
+model: claude-opus-5-5
 memory: project
 maxTurns: 40
 ---

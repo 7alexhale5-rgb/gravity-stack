@@ -54,6 +54,7 @@ EXECUTION_RECALL=implement,build,execute,coding,start building,build-stack,verif
 # ============================================================================
 # OPUS-4-7 - Behavior policy for Claude Opus 4.7 (released 2026-04-16)
 # Source of truth: ~/.claude/references/opus-4-7-operating-notes.md
+# Successor note (2026-09-29): Opus 4.7 is legacy; current models are in README.
 # ============================================================================
 OPUS-4-7_STATE=active
 OPUS-4-7_ALWAYS_ON=true

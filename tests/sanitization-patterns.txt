@@ -7,25 +7,12 @@
 5\.161\.86\.106
 
 # Private filesystem paths (use ~/ in docs instead of absolute)
-/Users/<name>
+/Users/alex[h]ale
 alexhale@
 
-# Private project codenames
-\bclient-a\b
-\bclient-b\b
-\bmike-lawdbot\b
-\bopenclaw\b
-\bpaperclip\b
-\bproject-c\b
-\bproject-d\b
-\bprettyfly-audit-engine\b
-\bevansville-tonight\b
-\bctox\b
-\blocal-ai-kit\b
-\bgravity-claw\b
-\bmission-control\b
-\bmemory-vault\b
-\bresearch-vault\b
+# Private project codenames live OUTSIDE this repo, never here: point
+# GRAVITY_PRIVATE_PATTERNS (see tests/test_sanitization.sh) at a file kept
+# elsewhere, one regex per line, same format as this file.
 
 # Credentials — patterns tuned to catch real keys, not obvious placeholders
 # (sk-ant-<real>, pplx-<real>, etc.). Placeholders like "pplx-your-key-here"

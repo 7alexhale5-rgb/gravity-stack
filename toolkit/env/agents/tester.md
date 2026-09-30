@@ -2,7 +2,7 @@
 name: tester
 description: Testing agent for comprehensive test coverage and quality assurance
 tools: Read, Glob, Grep, Write, Edit, Bash
-model: claude-opus-4-7
+model: claude-opus-5-5
 memory: project
 maxTurns: 35
 ---

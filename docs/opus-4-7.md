@@ -1,3 +1,5 @@
+> Historical (2026-04). Current models: see README.
+
 # Opus 4.7
 
 Claude Opus 4.7 shipped 2026-04-16. Five API params that worked on 4.6 now return HTTP 400. One silent default makes streaming UIs look hung. The new tokenizer uses up to 35% more tokens for the same input. Most setups need a migration pass, not a swap.

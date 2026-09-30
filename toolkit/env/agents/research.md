@@ -3,7 +3,7 @@ name: research
 description: Deep research agent for investigation, documentation analysis, and codebase exploration
 tools: Read, Glob, Grep, WebSearch, WebFetch
 disallowedTools: Edit, Write, Bash
-model: claude-opus-4-7
+model: claude-opus-5-5
 memory: project
 maxTurns: 25
 ---

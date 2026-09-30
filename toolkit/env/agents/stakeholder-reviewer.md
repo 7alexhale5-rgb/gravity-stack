@@ -2,7 +2,7 @@
 name: stakeholder-reviewer
 description: Review documents from multiple stakeholder perspectives. Use when reviewing PRDs, proposals, or strategy documents.
 tools: Read, Grep, Glob
-model: claude-sonnet-4-6
+model: claude-sonnet-5-5
 maxTurns: 15
 memory: project
 ---

@@ -35,3 +35,6 @@ routines/
 
 # Promptfoo run outputs
 reports/
+
+# Local Claude Code settings (machine-specific, never shareable)
+.claude/
