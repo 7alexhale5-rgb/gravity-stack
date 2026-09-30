@@ -11,6 +11,7 @@ This repo follows ICM (Jake Van Clief's folder method): this file routes, each r
 | Change or run a setup script                           | `toolkit/`   | [toolkit/CONTEXT.md](toolkit/CONTEXT.md)     | none              |
 | Write or update a deep-dive doc                        | `docs/`      | [docs/CONTEXT.md](docs/CONTEXT.md)           | none              |
 | Pick up or update the implementation plan              | `.planning/` | [.planning/CONTEXT.md](.planning/CONTEXT.md) | `/planning-stack` |
+| Verify installer behavior and public-file safety | `tests/` | [tests/CONTEXT.md](tests/CONTEXT.md) | none |
 
 Root files stay where their tools expect them: `LICENSE` (public repo requirement),
 `README.md`/`CHANGELOG.md` (public-facing), `.promptfoo/` (eval harness, its own
