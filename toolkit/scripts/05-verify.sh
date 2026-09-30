@@ -12,10 +12,10 @@ FAIL=0
 check() {
   if eval "$2" &>/dev/null; then
     echo -e "  ${GREEN}✓${NC} $1 $(eval "$3" 2>/dev/null || echo '')"
-    ((PASS++))
+    PASS=$((PASS + 1))
   else
     echo -e "  ${RED}✗${NC} $1"
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   fi
 }
 
