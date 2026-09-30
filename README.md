@@ -23,7 +23,7 @@ Gravity Stack documents a production AI-native development environment built on 
 - **CARL engine** — a ~1,700-line Python governance engine with context brackets, 6 domain rules, and the planning router
 - **9 specialized agents** across Opus, Sonnet, and Haiku tiers
 
-Every configuration in this repo is either my actual working config or a sanitized-to-share version of it. The sanitization test (CI-enforced) makes sure nothing personal leaks through.
+Every configuration in this repo is either my actual working config or a sanitized-to-share version of it. Public CI checks generic private-data patterns. Maintainers also check an external private-name profile before publishing.
 
 ## Current models
 
@@ -182,7 +182,13 @@ Fork, branch, make your changes, then:
 2. `cd site && npm run build` must produce zero errors
 3. Open a PR
 
-The sanitization test blocks PRs that leak personal paths, VPS IPs, API keys, or private project codenames. See [`tests/sanitization-patterns.txt`](tests/sanitization-patterns.txt) for the full list.
+Public CI checks only the generic patterns in [`tests/sanitization-patterns.txt`](tests/sanitization-patterns.txt). It does not know private project codenames. Maintainers must run the external private profile on the exact commit before merging or publishing:
+
+```bash
+GRAVITY_PRIVATE_PATTERNS="${PRIVATE_PATTERNS_FILE:?Set the external private pattern file}" bash tests/test_sanitization.sh
+```
+
+Keep that profile outside the repository and out of PR-controlled workflows. A clean scan covers its configured patterns; it is not a guarantee against every possible disclosure.
 
 ## License
 

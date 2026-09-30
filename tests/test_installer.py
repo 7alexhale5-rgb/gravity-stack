@@ -59,6 +59,29 @@ chmod +x "$dest/install.sh"
         self.assertEqual(before, sorted(str(p.relative_to(self.home)) for p in self.home.rglob('*')))
         return result.stdout
 
+    def real_verifier(self):
+        shutil.copy2(SOURCE / 'toolkit/scripts/05-verify.sh', self.toolkit / 'scripts/05-verify.sh')
+        for name in ['brew', 'node', 'python3', 'docker', 'gh', 'claude']:
+            self.script(name, '#!/bin/sh\necho stub-version\n')
+        for directory in ['hooks', 'memory']:
+            (self.home / '.claude' / directory).mkdir(parents=True)
+        (self.home / '.claude/settings.json').write_text('{}')
+
+    def test_real_verifier_reaches_optional_install(self):
+        self.real_verifier()
+        result = self.run_installer('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('10/10 passed', result.stdout)
+        self.assertTrue((self.home / 'installed-args').is_file())
+
+    def test_real_verifier_counts_all_failures(self):
+        self.real_verifier()
+        (self.home / '.claude/settings.json').unlink()
+        result = self.run_installer('--yes')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('9/10 passed', result.stdout)
+        self.assertFalse((self.home / 'installed-args').exists())
+
     def test_closed_stdin_skips(self):
         self.assertIn('No terminal to ask on. Skipping', self.no_install())
 
