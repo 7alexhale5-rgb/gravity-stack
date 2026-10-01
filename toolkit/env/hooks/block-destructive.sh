@@ -2,6 +2,8 @@
 # Claude PreToolUse Bash hook. Inspect literal commands; do not execute them.
 python3 -c '
 import json
+import io
+from pathlib import Path
 import re
 import shlex
 import sys
@@ -28,19 +30,69 @@ if re.search(r"git\s+clean\s+-[a-zA-Z]*f", command):
 if re.search(r"echo.*(_KEY|_SECRET|_TOKEN|PASSWORD).*\|", command):
     deny("possible credential exposure through a pipe")
 
+class CommentBoundaryStream(io.StringIO):
+    """shlex may consume a comment, but must leave its shell newline separator."""
+
+    def readline(self, size=-1):
+        line = super().readline(size)
+        if line.endswith("\n"):
+            self.seek(self.tell() - 1)
+            return line[:-1]
+        return line
+
+
+def shell_continuations(command):
+    """Remove shell line continuations without altering quoted literals or comments."""
+    output = []
+    quote = ""
+    comment = False
+    position = 0
+    while position < len(command):
+        char = command[position]
+        if comment:
+            output.append(char)
+            comment = char != "\n"
+        elif char == "\\" and quote != chr(39) and position + 1 < len(command):
+            following = command[position + 1]
+            if following != "\n":
+                output.extend((char, following))
+            position += 2
+            continue
+        else:
+            if char in (chr(39), chr(34)):
+                if not quote:
+                    quote = char
+                elif quote == char:
+                    quote = ""
+            elif (
+                char == "#"
+                and not quote
+                and (not output or output[-1] in " \t\r\n;&|()<>")
+            ):
+                comment = True
+            output.append(char)
+        position += 1
+    return "".join(output)
+
+
+def git_executable(word):
+    return word == "git" or (Path(word).is_absolute() and Path(word).name == "git")
+
+
 try:
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
+    lexer = shlex.shlex(CommentBoundaryStream(shell_continuations(command)), posix=True, punctuation_chars=";&|()<>\n")
+    lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     words = list(lexer)
 except ValueError:
     sys.exit(0)
 
 for index, word in enumerate(words):
-    if word != "git":
+    if not git_executable(word):
         continue
     args = []
     for part in words[index + 1:]:
-        if part in (";", "&&", "||", "|", "&", "(", ")"):
+        if part and all(char in ";&|()<>\n" for char in part):
             break
         args.append(part)
     pos = 0

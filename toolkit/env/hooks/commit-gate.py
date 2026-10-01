@@ -12,6 +12,7 @@ import sys
 
 class CommentBoundaryStream(io.StringIO):
     """shlex may consume a comment, but must leave its shell newline separator."""
+
     def readline(self, size=-1):
         line = super().readline(size)
         if line.endswith("\n"):
@@ -20,13 +21,55 @@ class CommentBoundaryStream(io.StringIO):
         return line
 
 
+def shell_continuations(command):
+    """Remove shell line continuations without altering quoted literals or comments."""
+    output = []
+    quote = ""
+    comment = False
+    position = 0
+    while position < len(command):
+        char = command[position]
+        if comment:
+            output.append(char)
+            comment = char != "\n"
+        elif char == "\\" and quote != chr(39) and position + 1 < len(command):
+            following = command[position + 1]
+            if following != "\n":
+                output.extend((char, following))
+            position += 2
+            continue
+        else:
+            if char in (chr(39), chr(34)):
+                if not quote:
+                    quote = char
+                elif quote == char:
+                    quote = ""
+            elif (
+                char == "#"
+                and not quote
+                and (not output or output[-1] in " \t\r\n;&|()<>")
+            ):
+                comment = True
+            output.append(char)
+        position += 1
+    return "".join(output)
+
+
+def git_executable(word):
+    return word == "git" or (Path(word).is_absolute() and Path(word).name == "git")
+
+
 def commit_directories(command, base):
     """Resolve literal cd/Git options; never execute the submitted shell command."""
-    lexer = shlex.shlex(CommentBoundaryStream(command), posix=True, punctuation_chars=";&|()<>\n")
+    lexer = shlex.shlex(
+        CommentBoundaryStream(shell_continuations(command)),
+        posix=True,
+        punctuation_chars=";&|()<>\n",
+    )
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     words = list(lexer)
-    if not any(word == "git" for word in words):
+    if not any(git_executable(word) for word in words):
         return []
     segments = []
     segment = []
@@ -46,16 +89,22 @@ def commit_directories(command, base):
         if not args:
             continue
         if args[0] == "cd":
-            if len(args) != 2 or args[1].startswith("-") or any(c in args[1] for c in "$`~"):
+            if (
+                len(args) != 2
+                or args[1].startswith("-")
+                or any(c in args[1] for c in "$`~")
+            ):
                 uncertain_cwd = True
             else:
                 directory = (directory / args[1]).resolve()
             continue
         if args[0] in ("pushd", "popd", "eval", "source", ".", "export"):
             uncertain_cwd = True
-        if args[0] != "git":
-            if "git" in args and "commit" in args:
-                raise ValueError("use a literal Git command so the commit directory can be checked")
+        if not git_executable(args[0]):
+            if any(git_executable(word) for word in args) and "commit" in args:
+                raise ValueError(
+                    "use a literal Git command so the commit directory can be checked"
+                )
             continue
         target = directory
         worktree = None
@@ -90,18 +139,33 @@ def commit_directories(command, base):
                 config_worktree |= flag[2:].lower().startswith("core.worktree=")
                 position += 1
             elif flag in (
-                "--no-pager", "--paginate", "--no-optional-locks", "--literal-pathspecs", "--no-lazy-fetch", "--bare"
+                "--no-pager",
+                "--paginate",
+                "--no-optional-locks",
+                "--literal-pathspecs",
+                "--no-lazy-fetch",
+                "--bare",
             ):
                 position += 1
             else:
                 if flag.startswith("-") and "commit" in args[position:]:
-                    raise ValueError("unsupported Git option; use literal -C or --work-tree")
+                    raise ValueError(
+                        "unsupported Git option; use literal -C or --work-tree"
+                    )
                 break
         if position < len(args) and args[position] == "commit":
             if (gitdir or config_worktree) and worktree is None:
-                raise ValueError("explicit --work-tree required with alternate Git directory configuration")
-            if unsupported or uncertain_cwd or any(c in str(target) + (worktree or "") for c in "$`~"):
-                raise ValueError("use literal cd/Git options without pipes, subshells or background commands")
+                raise ValueError(
+                    "explicit --work-tree required with alternate Git directory configuration"
+                )
+            if (
+                unsupported
+                or uncertain_cwd
+                or any(c in str(target) + (worktree or "") for c in "$`~")
+            ):
+                raise ValueError(
+                    "use literal cd/Git options without pipes, subshells or background commands"
+                )
             if worktree is not None:
                 target = (target / worktree).resolve()
             if not target.is_dir():

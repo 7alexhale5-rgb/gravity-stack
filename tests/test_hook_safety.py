@@ -1,5 +1,6 @@
 """Offline regressions for shipped stdin hooks and credential transport."""
 
+import ast
 import importlib.util
 import io
 import json
@@ -63,6 +64,22 @@ class DestructiveHookTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.decision(command), "allow")
 
+    def test_absolute_and_continued_pushes_are_denied(self):
+        for command in (
+            "/usr/bin/git push --force origin main",
+            "/opt/homebrew/bin/git --no-pager push --force origin main",
+            "git \\\npush --force origin main",
+            "git \\\n  push --force origin main",
+            "git push --force-with-lease origin\ntrue",
+            "git push --force-with-lease origin # inspect\ntrue",
+            "git push --force-with-lease origin\ngit status",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+        self.assertEqual(
+            self.decision("git push --force-with-lease origin feature\ntrue"), "allow"
+        )
+
 
 class CommitGateTests(unittest.TestCase):
     def test_both_shipped_copies_are_identical(self):
@@ -94,7 +111,17 @@ class CommitGateTests(unittest.TestCase):
 
     def test_literal_commit_targets_use_actual_working_directories(self):
         for hook in COMMIT_HOOKS:
-            for form in ("cd", "worktree", "worktree-split", "multiple", "newline", "comment", "cd-comment", "and-newline", "semicolon-newline"):
+            for form in (
+                "cd",
+                "worktree",
+                "worktree-split",
+                "multiple",
+                "newline",
+                "comment",
+                "cd-comment",
+                "and-newline",
+                "semicolon-newline",
+            ):
                 with (
                     self.subTest(hook=hook, form=form),
                     tempfile.TemporaryDirectory() as tmp,
@@ -160,6 +187,58 @@ class CommitGateTests(unittest.TestCase):
         for hook in COMMIT_HOOKS:
             self.assertEqual(self.run_hook(hook, "git status")[0], 0)
             self.assertEqual(self.run_hook(hook, "git -C . commit -m test")[0], 0)
+
+    def test_absolute_and_continued_commits_run_compilation(self):
+        failure = subprocess.CompletedProcess([], 1, "fixture failure", "")
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "/usr/bin/git commit -m test",
+                "/opt/homebrew/bin/git -C . commit -m test",
+                "git \\\ncommit -m test",
+                "git \\\n  commit -m test",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command, failure), (2, 1))
+
+    def test_continuations_preserve_shell_literal_content(self):
+        sources = [hook.read_text() for hook in COMMIT_HOOKS]
+        sources.append(
+            (HOOKS / "block-destructive.sh")
+            .read_text()
+            .split("python3 -c '\n", 1)[1]
+            .rsplit("'", 1)[0]
+        )
+        cases = (
+            ("git \\\ncommit", "git commit"),
+            ('git -C "si\\\nte" commit', 'git -C "site" commit'),
+            ("git -C 'si\\\nte' commit", "git -C 'si\\\nte' commit"),
+            (
+                "git status # inspect\\\n git commit",
+                "git status # inspect\\\n git commit",
+            ),
+            ("git status \\\\\ngit commit", "git status \\\\\ngit commit"),
+        )
+        for source in sources:
+            function = next(
+                node
+                for node in ast.parse(source).body
+                if isinstance(node, ast.FunctionDef)
+                and node.name == "shell_continuations"
+            )
+            namespace = {}
+            exec(
+                compile(
+                    ast.Module(body=[function], type_ignores=[]),
+                    "hook-continuations",
+                    "exec",
+                ),
+                namespace,
+            )
+            for command, expected in cases:
+                with self.subTest(command=command):
+                    self.assertEqual(
+                        namespace["shell_continuations"](command), expected
+                    )
 
     def test_failed_check_blocks_regardless_of_output_channel(self):
         for hook in COMMIT_HOOKS:
