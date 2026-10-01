@@ -94,7 +94,7 @@ class CommitGateTests(unittest.TestCase):
 
     def test_literal_commit_targets_use_actual_working_directories(self):
         for hook in COMMIT_HOOKS:
-            for form in ("cd", "worktree", "worktree-split", "multiple", "newline"):
+            for form in ("cd", "worktree", "worktree-split", "multiple", "newline", "comment", "cd-comment", "and-newline", "semicolon-newline"):
                 with (
                     self.subTest(hook=hook, form=form),
                     tempfile.TemporaryDirectory() as tmp,
@@ -111,6 +111,10 @@ class CommitGateTests(unittest.TestCase):
                         "worktree": f"git --work-tree={site} commit -m test",
                         "worktree-split": f"git --work-tree {site} commit -m test",
                         "newline": "cd site\ngit commit -m test",
+                        "comment": "git status # inspect\ngit -C site commit -m test",
+                        "cd-comment": "cd site # enter project\ngit commit -m test",
+                        "and-newline": "cd site &&\ngit commit -m test",
+                        "semicolon-newline": "cd site;\ngit commit -m test",
                         "multiple": "git -C site commit -m one && git -C second commit -m two",
                     }[form]
                     payload = {"cwd": str(root), "tool_input": {"command": command}}

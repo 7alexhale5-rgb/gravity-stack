@@ -247,6 +247,10 @@ chmod +x "$dest/install.sh"
         store = self.home / ".claude/settings.json"
         for matcher, command, expected in (
             ("Bash|Read", "python3 $HOME/.claude/hooks/commit-gate.py", 0),
+            ("Bash", "python3 ~/.claude/hooks/commit-gate.py", 0),
+            ("Bash", f"python3 {self.home}/.claude/hooks/commit-gate.py", 0),
+            ("Bash", 'python3 "$HOME/.claude/hooks/commit-gate.py"', 0),
+            ("Bash", "python3 '$HOME/.claude/hooks/commit-gate.py'", 1),
             ("Read", "python3 $HOME/.claude/hooks/commit-gate.py", 1),
             ("[", "python3 $HOME/.claude/hooks/commit-gate.py", 1),
             ("Bash", "echo $HOME/.claude/hooks/commit-gate.py", 1),

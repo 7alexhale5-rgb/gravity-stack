@@ -39,7 +39,7 @@ try:
             raise ValueError('invalid hook matcher')
         return result.returncode == 0
     def invokes_gate(command):
-        args = shlex.split(os.path.expanduser(os.path.expandvars(command)))
+        args = shlex.split(command, posix=False)
         if not args or not re.fullmatch(r'python(?:3(?:\.\d+)?)?', Path(args[0]).name):
             return False
         position = 1
@@ -47,7 +47,15 @@ try:
             position += 1
         if position < len(args) and args[position] == '--':
             position += 1
-        return position < len(args) and Path(args[position]).resolve() == gate.resolve()
+        # Recognize literal shell spellings, without expanding single-quoted variables.
+        relative = str(gate.relative_to(Path.home()))
+        absolute = str(gate)
+        supported = {
+            absolute, '"' + absolute + '"', "'" + absolute + "'",
+            '~/' + relative, '$HOME/' + relative, '${HOME}/' + relative,
+            '"$HOME/' + relative + '"', '"${HOME}/' + relative + '"',
+        }
+        return position < len(args) and args[position] in supported
     registered = False
     for group in settings.get('hooks', {}).get('PreToolUse', []):
         if not matches_bash(group.get('matcher', '')):

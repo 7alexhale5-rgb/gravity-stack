@@ -2,6 +2,7 @@
 """Claude PreToolUse hook: block commits when TypeScript checking cannot pass."""
 
 import json
+import io
 import os
 from pathlib import Path
 import shlex
@@ -9,9 +10,19 @@ import subprocess
 import sys
 
 
+class CommentBoundaryStream(io.StringIO):
+    """shlex may consume a comment, but must leave its shell newline separator."""
+    def readline(self, size=-1):
+        line = super().readline(size)
+        if line.endswith("\n"):
+            self.seek(self.tell() - 1)
+            return line[:-1]
+        return line
+
+
 def commit_directories(command, base):
     """Resolve literal cd/Git options; never execute the submitted shell command."""
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
+    lexer = shlex.shlex(CommentBoundaryStream(command), posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     words = list(lexer)
@@ -22,7 +33,7 @@ def commit_directories(command, base):
     unsupported = False
     for word in words:
         if word and all(char in ";&|()<>\n" for char in word):
-            unsupported |= word not in (";", "&&", "\n")
+            unsupported |= word.strip("\n") not in ("", ";", "&&")
             segments.append(segment)
             segment = []
         else:
