@@ -21,6 +21,33 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_push_option_value_is_not_a_force_flag(self):
+        for option in ("-oflag", "-o flag", "--push-option=flag", "--push-option flag"):
+            with self.subTest(option=option):
+                self.assertEqual(
+                    self.decision(f"git push {option} origin main"), "allow"
+                )
+                self.assertEqual(
+                    self.decision(
+                        f"git push {option} --force-with-lease origin feature:refs/heads/feature"
+                    ),
+                    "allow",
+                )
+        for flag in ("-f", "-vf"):
+            self.assertEqual(self.decision(f"git push {flag} origin main"), "deny")
+
+    def test_lease_push_cannot_add_implicit_destination_options(self):
+        self.assertEqual(self.decision("git push --tags origin"), "allow")
+        for option in ("--tags", "--follow-tags", "--prune", "--delete", "-d"):
+            with self.subTest(option=option):
+                self.assertEqual(
+                    self.decision(
+                        "git push --force-with-lease=refs/tags/v1:abc123 "
+                        f"{option} origin feature:refs/heads/feature"
+                    ),
+                    "deny",
+                )
+
     def test_literal_punctuation_cannot_hide_push_arguments(self):
         for value in ("';'", '";"', r"\;", "'&&'", r"\&\&", "'\n'"):
             with self.subTest(value=value):

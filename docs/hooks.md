@@ -22,14 +22,18 @@ A matcher contains a nested `hooks` list. This registers the installed commit ga
 ```json
 {
   "hooks": {
-    "PreToolUse": [{
-      "matcher": "Bash",
-      "hooks": [{
-        "type": "command",
-        "command": "python3 $HOME/.claude/hooks/commit-gate.py",
-        "timeout": 70
-      }]
-    }]
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $HOME/.claude/hooks/commit-gate.py",
+            "timeout": 70
+          }
+        ]
+      }
+    ]
   }
 }
 ```
@@ -40,15 +44,15 @@ The phase-5 check verifies the script and Bash registration, not live firing.
 
 ## Available examples
 
-| Hook | Event | Default install | Proof needed |
-| --- | --- | --- | --- |
-| Commit gate | PreToolUse / Bash | Yes | Failing compiler blocks with exit 2 |
-| File guard | PreToolUse / Edit or Write | Starter inline command | Protected path blocks with stdin JSON |
-| Notification | Notification | Starter command | macOS alert appears |
-| Session backup | PreCompact | Starter command | Input transcript exists and saved copy matches |
-| Auto-lint | PostToolUse | Manual | Diagnostics refer to the edited file |
-| Session context | SessionStart | Starter command | Git and issue access verified separately |
-| CARL rule injection | UserPromptSubmit | Manual | Required rule files and dependencies exist; actual context is observed |
+| Hook                | Event                      | Default install        | Proof needed                                                           |
+| ------------------- | -------------------------- | ---------------------- | ---------------------------------------------------------------------- |
+| Commit gate         | PreToolUse / Bash          | Yes                    | Failing compiler blocks with exit 2                                    |
+| File guard          | PreToolUse / Edit or Write | Starter inline command | Protected path blocks with stdin JSON                                  |
+| Notification        | Notification               | Starter command        | macOS alert appears                                                    |
+| Session backup      | PreCompact                 | Starter command        | Input transcript exists and saved copy matches                         |
+| Auto-lint           | PostToolUse                | Manual                 | Diagnostics refer to the edited file                                   |
+| Session context     | SessionStart               | Starter command        | Git and issue access verified separately                               |
+| CARL rule injection | UserPromptSubmit           | Manual                 | Required rule files and dependencies exist; actual context is observed |
 
 The starter backup command expects `~/.claude/current-session.jsonl`; that file is
 not guaranteed to exist. Select the bundled stdin-aware backup hook if its dependencies
@@ -77,7 +81,8 @@ The destructive-command hook blocks selected dangerous shell forms. It does not 
 possible shell program. The file guard covers Edit/Write paths, not all shell writes.
 Lease pushes require a positional repository and a literal explicit destination such as
 `feature:refs/heads/feature`. Implicit destinations can follow repository mappings, so they
-are refused. Lease pushes using `--repo`, abbreviated or unknown push options, wildcard refs,
+are refused. Lease pushes using `--repo`, extra-destination or deletion options (`--all`,
+`--tags`, `--follow-tags`, `--prune`, `--delete`), abbreviated or unknown push options, wildcard refs,
 or the protected destinations `main`, `master` and `HEAD` are refused. Ordinary pushes
 using the supported full option names remain allowed. Quoted or escaped punctuation is
 treated as a literal argument; actual shell separators still divide commands.

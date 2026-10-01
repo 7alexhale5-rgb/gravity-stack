@@ -141,8 +141,6 @@ for index, (word, operator) in enumerate(tokens):
         if arg == "--":
             positionals.extend(push_args[position + 1:])
             break
-        if arg in ("--force", "--mirror") or (arg.startswith("-") and not arg.startswith("--") and "f" in arg[1:]):
-            deny("unprotected force push")
         if arg in ("-o", "--push-option", "--repo", "--receive-pack", "--exec"):
             if position + 1 >= len(push_args):
                 deny("push option needs a value")
@@ -151,15 +149,16 @@ for index, (word, operator) in enumerate(tokens):
             continue
         if arg.startswith(("--push-option=", "--repo=", "--receive-pack=", "--exec=")) or (arg.startswith("-o") and len(arg) > 2):
             remote_option |= arg.startswith("--repo=")
+        elif arg in ("--force", "--mirror") or (arg.startswith("-") and not arg.startswith("--") and "f" in arg[1:]):
+            deny("unprotected force push")
         elif arg == "--force-with-lease" or arg.startswith("--force-with-lease="):
             lease = True
-        elif arg == "--all":
+        elif arg in ("--all", "--tags", "--follow-tags", "--prune", "--delete", "-d"):
             all_refs = True
         elif arg in (
             "-u", "--set-upstream", "-n", "--dry-run",
             "-v", "--verbose", "-q", "--quiet", "--atomic", "--signed",
-            "--no-signed", "--verify", "--no-verify", "--follow-tags", "--tags",
-            "--delete", "-d", "--prune", "--porcelain", "--progress",
+            "--no-signed", "--verify", "--no-verify", "--porcelain", "--progress",
         ):
             pass
         elif arg.startswith("-"):
