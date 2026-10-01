@@ -101,8 +101,8 @@ export const researchServers: MCPServer[] = [
     type: "cloud",
     priority: "optional",
     apiKeyRequired: true,
-    description: "Library of real app screens and user flows. Used by the ui-ux focus tag for pattern references. Needs a Mobbin subscription.",
-    config: { type: "http", url: "<endpoint from your Mobbin account>" },
+    description: "Library of real app screens and user flows. Used by the ui-ux focus tag for pattern references. OAuth; paid Mobbin plans (beta since 2026-04).",
+    config: { type: "http", url: "https://api.mobbin.com/mcp" },
   },
   {
     name: "Refero",
@@ -110,8 +110,8 @@ export const researchServers: MCPServer[] = [
     type: "cloud",
     priority: "optional",
     apiKeyRequired: true,
-    description: "Searchable UI and web design references. Used by the ui-ux focus tag alongside Mobbin. Needs a Refero subscription.",
-    config: { type: "http", url: "<endpoint from your Refero account>" },
+    description: "Searchable UI and web design references. Used by the ui-ux focus tag alongside Mobbin. OAuth or bearer token; paid Refero plan.",
+    config: { type: "http", url: "https://api.refero.design/mcp" },
   },
   {
     name: "Socket",
