@@ -26,15 +26,37 @@ echo ""
 
 commit_gate_registered() {
   python3 - <<'PYTHON'
-import json, os
+import json, os, re, shlex, subprocess
 from pathlib import Path
 try:
     settings = json.loads((Path.home() / '.claude/settings.json').read_text())
     gate = Path.home() / '.claude/hooks/commit-gate.py'
-    commands = [hook.get('command', '') for group in settings.get('hooks', {}).get('PreToolUse', []) if group.get('matcher') == 'Bash' for hook in group.get('hooks', []) if hook.get('type') == 'command']
-    registered = any(str(gate) in os.path.expanduser(os.path.expandvars(command)) for command in commands)
+    def matches_bash(matcher):
+        # Claude uses exact alternatives or JavaScript RegExp.test, not Python regex.
+        script = "const m=process.argv[1]; try {const ok=!m||m==='*'||(/^[A-Za-z0-9_ ,|\\-]+$/.test(m)?m.split(/[|,]/).some(x=>x.trim()==='Bash'):new RegExp(m).test('Bash'));process.exit(ok?0:1)} catch {process.exit(2)}"
+        result = subprocess.run(['node', '-e', script, matcher], capture_output=True, timeout=5)
+        if result.returncode == 2:
+            raise ValueError('invalid hook matcher')
+        return result.returncode == 0
+    def invokes_gate(command):
+        args = shlex.split(os.path.expanduser(os.path.expandvars(command)))
+        if not args or not re.fullmatch(r'python(?:3(?:\.\d+)?)?', Path(args[0]).name):
+            return False
+        position = 1
+        while position < len(args) and args[position] in ('-u', '-B', '-I', '-E', '-s', '-S', '-O', '-OO'):
+            position += 1
+        if position < len(args) and args[position] == '--':
+            position += 1
+        return position < len(args) and Path(args[position]).resolve() == gate.resolve()
+    registered = False
+    for group in settings.get('hooks', {}).get('PreToolUse', []):
+        if not matches_bash(group.get('matcher', '')):
+            continue
+        for hook in group.get('hooks', []):
+            if hook.get('type') == 'command' and invokes_gate(hook.get('command', '')):
+                registered = True
     raise SystemExit(0 if gate.is_file() and registered else 1)
-except (OSError, ValueError, TypeError, AttributeError):
+except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
     raise SystemExit(1)
 PYTHON
 }

@@ -46,15 +46,19 @@ for index, word in enumerate(words):
     pos = 0
     while pos < len(args):
         flag = args[pos]
-        if flag in ("-c", "-C", "--git-dir", "--work-tree"):
+        if flag in ("-c", "-C", "--git-dir", "--work-tree", "--config-env", "--namespace"):
             pos += 2
-        elif flag.startswith(("-c", "-C", "--git-dir=", "--work-tree=")):
+        elif flag.startswith(("-c", "-C", "--git-dir=", "--work-tree=", "--config-env=", "--namespace=", "--exec-path=", "--attr-source=")):
+            pos += 1
+        elif flag in ("--no-pager", "--paginate", "--no-optional-locks", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-replace-objects", "--no-lazy-fetch", "--bare"):
             pos += 1
         else:
             break
     if pos >= len(args) or args[pos] != "push":
         continue
     push_args = args[pos + 1:]
+    if "--mirror" in push_args or any(a.startswith("+") for a in push_args):
+        deny("implicit force push")
     hard_force = any(a == "--force" or (a.startswith("-") and not a.startswith("--") and "f" in a[1:]) for a in push_args)
     lease = any(a == "--force-with-lease" or a.startswith("--force-with-lease=") for a in push_args)
     if not (hard_force or lease):
@@ -66,7 +70,7 @@ for index, word in enumerate(words):
     if not refs:
         deny("force push has no explicit feature ref")
     for ref in refs:
-        dest = ref.rsplit(":", 1)[-1].removeprefix("refs/heads/")
+        dest = ref.removeprefix("+").rsplit(":", 1)[-1].removeprefix("refs/heads/")
         if dest in ("main", "master", "HEAD") or "*" in dest or not dest:
             deny("force push may update a protected or unknown ref")
 '

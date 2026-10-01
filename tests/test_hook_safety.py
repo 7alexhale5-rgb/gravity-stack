@@ -43,6 +43,11 @@ class DestructiveHookTests(unittest.TestCase):
             "git push --force-with-lease origin HEAD:main",
             "git push --force-with-lease origin",
             "git push --force origin feature",
+            "git push origin +HEAD:main",
+            "git push --mirror origin",
+            "git push --force-with-lease origin +main",
+            "git --no-pager push --force origin main",
+            "git --config-env=push.default=FIXTURE push --force origin main",
         ):
             with self.subTest(command=command):
                 self.assertEqual(self.decision(command), "deny")
@@ -50,6 +55,8 @@ class DestructiveHookTests(unittest.TestCase):
     def test_safe_push_forms_remain_allowed(self):
         for command in (
             "git push origin main",
+            "git --no-pager push origin main",
+            "git --no-pager push --force-with-lease origin feature",
             "git push --force-with-lease origin feature",
             "git push origin feature --force-with-lease",
         ):
@@ -84,6 +91,66 @@ class CommitGateTests(unittest.TestCase):
                 else:
                     code = 0
             return code, fake.call_count
+
+    def test_literal_commit_targets_use_actual_working_directories(self):
+        for hook in COMMIT_HOOKS:
+            for form in ("cd", "worktree", "worktree-split", "multiple", "newline"):
+                with (
+                    self.subTest(hook=hook, form=form),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    root = Path(tmp).resolve()
+                    site = root / "site"
+                    site.mkdir()
+                    (site / "tsconfig.json").write_text("{}")
+                    second = root / "second"
+                    second.mkdir()
+                    (second / "tsconfig.json").write_text("{}")
+                    command = {
+                        "cd": "cd site && git commit -m test",
+                        "worktree": f"git --work-tree={site} commit -m test",
+                        "worktree-split": f"git --work-tree {site} commit -m test",
+                        "newline": "cd site\ngit commit -m test",
+                        "multiple": "git -C site commit -m one && git -C second commit -m two",
+                    }[form]
+                    payload = {"cwd": str(root), "tool_input": {"command": command}}
+                    failure = subprocess.CompletedProcess([], 1, "failed fixture", "")
+                    results = (
+                        [subprocess.CompletedProcess([], 0, "", ""), failure]
+                        if form == "multiple"
+                        else [failure]
+                    )
+                    with (
+                        mock.patch.object(
+                            sys, "stdin", io.StringIO(json.dumps(payload))
+                        ),
+                        mock.patch("subprocess.run", side_effect=results) as compiler,
+                        mock.patch.object(sys, "stderr", io.StringIO()),
+                    ):
+                        with self.assertRaises(SystemExit) as exit:
+                            runpy.run_path(str(hook), run_name="__main__")
+                    self.assertEqual(exit.exception.code, 2)
+                    expected = (
+                        [str(site), str(second)] if form == "multiple" else [str(site)]
+                    )
+                    self.assertEqual(
+                        [call.kwargs["cwd"] for call in compiler.call_args_list],
+                        expected,
+                    )
+
+    def test_unsupported_commit_contexts_refuse_before_compilation(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "git commit -m test | cat",
+                "git commit -m test &",
+                "GIT_WORK_TREE=site git commit -m test",
+                "git -c core.worktree=site commit -m test",
+                "git --config-env=core.worktree=FIXTURE commit -m test",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    code, calls = self.run_hook(hook, command)
+                    self.assertEqual(code, 2)
+                    self.assertEqual(calls, 0)
 
     def test_noncommit_and_clean_check_allow(self):
         for hook in COMMIT_HOOKS:

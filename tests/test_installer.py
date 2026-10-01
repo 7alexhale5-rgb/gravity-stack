@@ -9,6 +9,7 @@ import os
 import json
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -208,8 +209,9 @@ chmod +x "$dest/install.sh"
             SOURCE / "toolkit/scripts/05-verify.sh",
             self.toolkit / "scripts/05-verify.sh",
         )
-        for name in ["brew", "node", "docker", "gh", "claude"]:
+        for name in ["brew", "docker", "gh", "claude"]:
             self.script(name, "#!/bin/sh\necho stub-version\n")
+        self.script("node", "#!/bin/sh\nif [ \"${1:-}\" = -e ]; then exec " + shlex.quote(shutil.which("node")) + " \"$@\"; fi\necho stub-version\n")
         for directory in ["hooks", "memory"]:
             (self.home / ".claude" / directory).mkdir(parents=True)
         (self.home / ".claude/settings.json").write_text(
@@ -239,6 +241,36 @@ chmod +x "$dest/install.sh"
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("11/11 passed", result.stdout)
         self.assertTrue((self.home / "installed-args").is_file())
+
+    def test_verifier_regex_matcher_and_exact_invoked_script(self):
+        self.real_verifier()
+        store = self.home / ".claude/settings.json"
+        for matcher, command, expected in (
+            ("Bash|Read", "python3 $HOME/.claude/hooks/commit-gate.py", 0),
+            ("Read", "python3 $HOME/.claude/hooks/commit-gate.py", 1),
+            ("[", "python3 $HOME/.claude/hooks/commit-gate.py", 1),
+            ("Bash", "echo $HOME/.claude/hooks/commit-gate.py", 1),
+            ("Bash", "python3 $HOME/.claude/hooks/commit-gate.py.bak", 1),
+        ):
+            with self.subTest(matcher=matcher, command=command):
+                original = json.dumps(
+                    {
+                        "hooks": {
+                            "PreToolUse": [
+                                {
+                                    "matcher": matcher,
+                                    "hooks": [{"type": "command", "command": command}],
+                                }
+                            ]
+                        }
+                    }
+                )
+                store.write_text(original)
+                result = self.run_installer("--skip-dev-protocol")
+                self.assertEqual(
+                    result.returncode, expected, result.stdout + result.stderr
+                )
+                self.assertEqual(store.read_text(), original)
 
     def test_real_verifier_counts_all_failures(self):
         self.real_verifier()
