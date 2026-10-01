@@ -21,6 +21,40 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_literal_punctuation_cannot_hide_push_arguments(self):
+        for value in ("';'", '";"', r"\;", "'&&'", r"\&\&", "'\n'"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.decision(f"git -C {value} push --force origin main"), "deny"
+                )
+                self.assertEqual(
+                    self.decision(f"git -C {value} push origin main"), "allow"
+                )
+        for separator in (";", "\n", "&&"):
+            self.assertEqual(
+                self.decision(f"git status{separator}git push --force origin main"),
+                "deny",
+            )
+
+    def test_lease_requires_supported_options_and_explicit_destination(self):
+        for command in (
+            "git push --force-with-l origin main",
+            "git push --for origin main",
+            "git push --force-with-lease --repo=origin origin",
+            "git push --force-with-lease --repo origin origin",
+            "git push --force-with-lease origin feature",
+            "git push --force-with-lease origin feature:main",
+            "git push --force-with-lease origin feature:refs/heads/main",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+        self.assertEqual(
+            self.decision(
+                "git push --force-with-lease origin feature:refs/heads/feature"
+            ),
+            "allow",
+        )
+
     def decision(self, command):
         run = subprocess.run(
             ["bash", str(HOOKS / "block-destructive.sh")],
@@ -57,9 +91,9 @@ class DestructiveHookTests(unittest.TestCase):
         for command in (
             "git push origin main",
             "git --no-pager push origin main",
-            "git --no-pager push --force-with-lease origin feature",
-            "git push --force-with-lease origin feature",
-            "git push origin feature --force-with-lease",
+            "git --no-pager push --force-with-lease origin feature:refs/heads/feature",
+            "git push --force-with-lease origin feature:refs/heads/feature",
+            "git push origin feature:refs/heads/feature --force-with-lease",
         ):
             with self.subTest(command=command):
                 self.assertEqual(self.decision(command), "allow")
@@ -77,7 +111,10 @@ class DestructiveHookTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.decision(command), "deny")
         self.assertEqual(
-            self.decision("git push --force-with-lease origin feature\ntrue"), "allow"
+            self.decision(
+                "git push --force-with-lease origin feature:refs/heads/feature\ntrue"
+            ),
+            "allow",
         )
 
     def test_literal_hashes_do_not_hide_guarded_commands(self):
@@ -105,7 +142,7 @@ class DestructiveHookTests(unittest.TestCase):
                     )
                     self.assertEqual(
                         self.decision(
-                            f"git push --force-with-lease {placement} feature"
+                            f"git push --force-with-lease {placement} feature:refs/heads/feature"
                         ),
                         "allow",
                     )
@@ -124,6 +161,41 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_quoted_punctuation_directory_still_runs_compilation(self):
+        for hook in COMMIT_HOOKS:
+            for name, token in ((";", "';'"), (";", r"\;"), ("&&", "'&&'")):
+                with (
+                    self.subTest(hook=hook, token=token),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    root = Path(tmp).resolve()
+                    target = root / name
+                    target.mkdir()
+                    (target / "tsconfig.json").write_text("{}")
+                    payload = {
+                        "cwd": str(root),
+                        "tool_input": {"command": f"git -C {token} commit -m test"},
+                    }
+                    with (
+                        mock.patch.object(
+                            sys, "stdin", io.StringIO(json.dumps(payload))
+                        ),
+                        mock.patch(
+                            "subprocess.run",
+                            return_value=subprocess.CompletedProcess(
+                                [], 1, "failed", ""
+                            ),
+                        ) as compiler,
+                        mock.patch.object(sys, "stderr", io.StringIO()),
+                    ):
+                        with self.assertRaises(SystemExit) as exit:
+                            runpy.run_path(str(hook), run_name="__main__")
+                    self.assertEqual(exit.exception.code, 2)
+                    self.assertEqual(
+                        [call.kwargs["cwd"] for call in compiler.call_args_list],
+                        [str(target)],
+                    )
+
     def test_both_shipped_copies_are_identical(self):
         self.assertEqual(COMMIT_HOOKS[0].read_bytes(), COMMIT_HOOKS[1].read_bytes())
 

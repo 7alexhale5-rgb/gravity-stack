@@ -71,21 +71,48 @@ def git_executable(word):
     return word == "git" or (Path(word).is_absolute() and Path(word).name == "git")
 
 
-try:
-    lexer = shlex.shlex(shell_continuations(command), posix=True, punctuation_chars=";&|()<>\n")
+def shell_tokens(command):
+    """Keep literal punctuation distinct from shell operators after decoding."""
+    marker = "\ue000"
+    if marker in command:
+        raise ValueError("reserved shell marker")
+    marked = []
+    quote = ""
+    escaped = False
+    for char in shell_continuations(command):
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != chr(39):
+            if not quote:
+                marked.append(marker)
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = ""
+        elif char in (chr(39), chr(34)):
+            quote = char
+            marked.append(marker)
+        marked.append(char)
+    lexer = shlex.shlex("".join(marked), posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     lexer.commenters = ""
-    words = list(lexer)
-except ValueError:
-    sys.exit(0)
+    return [
+        (word.replace(marker, ""), bool(word) and all(c in ";&|()<>\n" for c in word))
+        for word in lexer
+    ]
 
-for index, word in enumerate(words):
-    if not git_executable(word):
+try:
+    tokens = shell_tokens(command)
+except ValueError:
+    deny("shell command cannot be inspected")
+
+for index, (word, operator) in enumerate(tokens):
+    if operator or not git_executable(word):
         continue
     args = []
-    for part in words[index + 1:]:
-        if part and all(char in ";&|()<>\n" for char in part):
+    for part, operator in tokens[index + 1:]:
+        if operator:
             break
         args.append(part)
     pos = 0
@@ -104,22 +131,18 @@ for index, word in enumerate(words):
     if pos >= len(args) or args[pos] != "push":
         continue
     push_args = args[pos + 1:]
-    if "--mirror" in push_args or any(a.startswith("+") for a in push_args):
-        deny("implicit force push")
-    hard_force = any(a == "--force" or (a.startswith("-") and not a.startswith("--") and "f" in a[1:]) for a in push_args)
-    lease = any(a == "--force-with-lease" or a.startswith("--force-with-lease=") for a in push_args)
-    if not (hard_force or lease):
-        continue
-    if hard_force or any(a in ("--all", "--mirror") for a in push_args):
-        deny("unprotected force push")
     positionals = []
     remote_option = False
+    lease = False
+    all_refs = False
     position = 0
     while position < len(push_args):
         arg = push_args[position]
         if arg == "--":
             positionals.extend(push_args[position + 1:])
             break
+        if arg in ("--force", "--mirror") or (arg.startswith("-") and not arg.startswith("--") and "f" in arg[1:]):
+            deny("unprotected force push")
         if arg in ("-o", "--push-option", "--repo", "--receive-pack", "--exec"):
             if position + 1 >= len(push_args):
                 deny("push option needs a value")
@@ -128,22 +151,38 @@ for index, word in enumerate(words):
             continue
         if arg.startswith(("--push-option=", "--repo=", "--receive-pack=", "--exec=")) or (arg.startswith("-o") and len(arg) > 2):
             remote_option |= arg.startswith("--repo=")
-        elif arg.startswith("--force-with-lease=") or arg in (
-            "--force-with-lease", "-u", "--set-upstream", "-n", "--dry-run",
+        elif arg == "--force-with-lease" or arg.startswith("--force-with-lease="):
+            lease = True
+        elif arg == "--all":
+            all_refs = True
+        elif arg in (
+            "-u", "--set-upstream", "-n", "--dry-run",
             "-v", "--verbose", "-q", "--quiet", "--atomic", "--signed",
-            "--no-signed", "--verify", "--no-verify", "--follow-tags",
+            "--no-signed", "--verify", "--no-verify", "--follow-tags", "--tags",
+            "--delete", "-d", "--prune", "--porcelain", "--progress",
         ):
             pass
         elif arg.startswith("-"):
-            deny("unsupported force-push option; use explicit ordinary refs")
+            deny("unsupported push option; use full option names")
         else:
             positionals.append(arg)
         position += 1
-    refs = positionals if remote_option else positionals[1:]
+    if any(ref.startswith("+") for ref in positionals):
+        deny("implicit force push")
+    if not lease:
+        continue
+    if remote_option or all_refs:
+        deny("lease push needs a positional repository and explicit destination")
+    refs = positionals[1:]
     if not refs:
         deny("force push has no explicit feature ref")
     for ref in refs:
-        dest = ref.removeprefix("+").rsplit(":", 1)[-1].removeprefix("refs/heads/")
+        if ref.count(":") != 1:
+            deny("lease push needs an explicit destination refspec")
+        source, destination = ref.split(":")
+        if not re.fullmatch(r"[A-Za-z0-9_./-]+", source) or not re.fullmatch(r"refs/heads/[A-Za-z0-9_./-]+", destination):
+            deny("lease push needs literal source and full branch destination")
+        dest = destination.removeprefix("refs/heads/")
         if dest in ("main", "master", "HEAD") or "*" in dest or not dest:
             deny("force push may update a protected or unknown ref")
 '

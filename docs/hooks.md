@@ -75,5 +75,11 @@ that the host loaded it.
 
 The destructive-command hook blocks selected dangerous shell forms. It does not parse every
 possible shell program. The file guard covers Edit/Write paths, not all shell writes.
+Lease pushes require a positional repository and a literal explicit destination such as
+`feature:refs/heads/feature`. Implicit destinations can follow repository mappings, so they
+are refused. Lease pushes using `--repo`, abbreviated or unknown push options, wildcard refs,
+or the protected destinations `main`, `master` and `HEAD` are refused. Ordinary pushes
+using the supported full option names remain allowed. Quoted or escaped punctuation is
+treated as a literal argument; actual shell separators still divide commands.
 Keep credentials outside tracked settings and process arguments. Review optional model calls
 against your data rules and budget before enabling them.

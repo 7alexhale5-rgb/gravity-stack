@@ -51,24 +51,48 @@ def git_executable(word):
     return word == "git" or (Path(word).is_absolute() and Path(word).name == "git")
 
 
-def commit_directories(command, base):
-    """Resolve literal cd/Git options; never execute the submitted shell command."""
-    lexer = shlex.shlex(
-        shell_continuations(command),
-        posix=True,
-        punctuation_chars=";&|()<>\n",
-    )
+def shell_tokens(command):
+    """Keep literal punctuation distinct from shell operators after decoding."""
+    marker = "\ue000"
+    if marker in command:
+        raise ValueError("reserved shell marker")
+    marked = []
+    quote = ""
+    escaped = False
+    for char in shell_continuations(command):
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != chr(39):
+            if not quote:
+                marked.append(marker)
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = ""
+        elif char in (chr(39), chr(34)):
+            quote = char
+            marked.append(marker)
+        marked.append(char)
+    lexer = shlex.shlex("".join(marked), posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     lexer.commenters = ""
-    words = list(lexer)
-    if not any(git_executable(word) for word in words):
+    return [
+        (word.replace(marker, ""), bool(word) and all(c in ";&|()<>\n" for c in word))
+        for word in lexer
+    ]
+
+
+def commit_directories(command, base):
+    """Resolve literal cd/Git options; never execute the submitted shell command."""
+    tokens = shell_tokens(command)
+    if not any(git_executable(word) for word, operator in tokens if not operator):
         return []
     segments = []
     segment = []
     unsupported = False
-    for word in words:
-        if word and all(char in ";&|()<>\n" for char in word):
+    for word, operator in tokens:
+        if operator:
             unsupported |= word.strip("\n") not in ("", ";", "&&")
             segments.append(segment)
             segment = []
