@@ -11,7 +11,7 @@
     - type: contains-any
       value: ["## Coverage gaps", "## Coverage Gaps"]
     - type: contains-any
-      value: ["[WS]", "[HN]", "[FC:", "[PPLX]"]
+      value: ["[WS]", "[HN", "[FC:", "[PX"]
     - type: llm-rubric
       value: "Report opens with a decision answer, has one section per sub-question, tags claims with sources, and ends with a source-stats dashboard."
 
