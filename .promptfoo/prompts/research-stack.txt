@@ -35,6 +35,7 @@ Flags:
   perf -> "Performance budget", a11y -> "Accessibility checklist", market -> "Vendor and competitor matrix",
   content -> "Content and creative angles", ui-ux -> "Pattern references", devtools -> "Library decision matrix",
   ai-agents -> "Model and eval evidence", data-infra -> "Data and infra trade-offs", legal -> "Legal authority table"
+  comms -> "Telephony and messaging plan" (tags [RC] [TW] [TNX] [AIR] [DP] [CR] [FCC])
 - Bundles: #launch (seo, perf, a11y, content), #ship-audit (security, perf, a11y), #competitive (market, seo, content), #build-pick (devtools, security)
 
 Paid tools are optional. If a paid tool for a focus tag is unavailable, say so in the addendum and name the free fallback used.

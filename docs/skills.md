@@ -117,6 +117,7 @@ Skills for gathering information.
 | `devtools` | Library decision matrix |
 | `ai-agents` | Model and eval evidence |
 | `data-infra` | Data and infra trade-offs |
+| `comms` | Telephony and messaging plan |
 | `legal` | Legal authority table |
 
 Bundles: `#launch` (seo, perf, a11y, content), `#ship-audit` (security, perf, a11y), `#competitive` (market, seo, content), `#build-pick` (devtools, security). Add `--target <url|repo|path>` to run live checks on your own asset. Paid tools are optional; each tag falls back to free sources.

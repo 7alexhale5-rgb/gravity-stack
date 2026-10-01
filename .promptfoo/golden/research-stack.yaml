@@ -54,3 +54,14 @@
       value: ["[OSV", "[GHSA"]
     - type: llm-rubric
       value: "Has a Threat and advisory table addendum listing advisories or risks with [OSV] or [GHSA] source tags."
+
+- description: "research-stack --focus comms adds a telephony and messaging plan"
+  vars:
+    topic: "Should we build a click-to-call and power dialer with SMS into our custom CRM on RingCentral or Twilio? Mode: --focus comms"
+  assert:
+    - type: contains-any
+      value: ["Telephony and messaging plan", "Telephony and Messaging Plan"]
+    - type: contains-any
+      value: ["[RC", "[TW", "[AIR", "[CR", "[FCC", "free fallback", "unavailable"]
+    - type: llm-rubric
+      value: "Has a Telephony and messaging plan addendum with one row per calling mode (build or buy, event path, compliance prerequisite). Either cites at least one comms source tag ([RC] [TW] [TNX] [AIR] [DP] [CR] [FCC]) or states explicitly that paid comms tools were unavailable and names the free fallbacks used."
