@@ -33,7 +33,11 @@ try:
     gate = Path.home() / '.claude/hooks/commit-gate.py'
     def matches_bash(matcher):
         # Claude uses exact alternatives or JavaScript RegExp.test, not Python regex.
-        script = "const m=process.argv[1]; try {const ok=!m||m==='*'||(/^[A-Za-z0-9_ ,|\\-]+$/.test(m)?m.split(/[|,]/).some(x=>x.trim()==='Bash'):new RegExp(m).test('Bash'));process.exit(ok?0:1)} catch {process.exit(2)}"
+        if matcher in ('', '*'):
+            return True
+        if re.fullmatch(r'[A-Za-z0-9_ ,|\-]+', matcher):
+            return any(name.strip() == 'Bash' for name in re.split(r'[|,]', matcher))
+        script = "try {process.exit(new RegExp(process.argv[1]).test('Bash')?0:1)} catch {process.exit(2)}"
         result = subprocess.run(['node', '-e', script, matcher], capture_output=True, timeout=5)
         if result.returncode == 2:
             raise ValueError('invalid hook matcher')

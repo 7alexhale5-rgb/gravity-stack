@@ -116,11 +116,14 @@ for index, (word, operator) in enumerate(tokens):
             break
         args.append(part)
     pos = 0
+    inline_config = False
     while pos < len(args):
         flag = args[pos]
         if flag in ("-c", "-C", "--git-dir", "--work-tree", "--config-env", "--namespace"):
+            inline_config |= flag in ("-c", "--config-env")
             pos += 2
         elif flag.startswith(("-c", "-C", "--git-dir=", "--work-tree=", "--config-env=", "--namespace=", "--exec-path=", "--attr-source=")):
+            inline_config |= flag.startswith(("-c", "--config-env="))
             pos += 1
         elif flag in ("-P", "-p", "--no-advice", "--no-pager", "--paginate", "--no-optional-locks", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-replace-objects", "--no-lazy-fetch", "--bare"):
             pos += 1
@@ -130,6 +133,8 @@ for index, (word, operator) in enumerate(tokens):
             break
     if pos >= len(args) or args[pos] != "push":
         continue
+    if inline_config:
+        deny("inline Git configuration can change push effects; use a literal push")
     push_args = args[pos + 1:]
     positionals = []
     remote_option = False

@@ -211,7 +211,12 @@ chmod +x "$dest/install.sh"
         )
         for name in ["brew", "docker", "gh", "claude"]:
             self.script(name, "#!/bin/sh\necho stub-version\n")
-        self.script("node", "#!/bin/sh\nif [ \"${1:-}\" = -e ]; then exec " + shlex.quote(shutil.which("node")) + " \"$@\"; fi\necho stub-version\n")
+        self.script(
+            "node",
+            '#!/bin/sh\nif [ "${1:-}" = -e ]; then exec '
+            + shlex.quote(shutil.which("node"))
+            + ' "$@"; fi\necho stub-version\n',
+        )
         for directory in ["hooks", "memory"]:
             (self.home / ".claude" / directory).mkdir(parents=True)
         (self.home / ".claude/settings.json").write_text(
@@ -242,10 +247,51 @@ chmod +x "$dest/install.sh"
         self.assertIn("11/11 passed", result.stdout)
         self.assertTrue((self.home / "installed-args").is_file())
 
+    def test_literal_matchers_do_not_need_node_evaluation(self):
+        self.real_verifier()
+        self.script(
+            "node",
+            '#!/bin/sh\nif [ "${1:-}" = -e ]; then printf "called\\n" >> "$HOME/node-calls"; exit 97; fi\necho stub-version\n',
+        )
+        store = self.home / ".claude/settings.json"
+        original = json.loads(store.read_text())
+        for matcher, expected in (
+            ("Bash", 0),
+            ("Bash|Read", 0),
+            ("*", 0),
+            ("", 0),
+            ("Read", 1),
+        ):
+            with self.subTest(matcher=matcher):
+                original["hooks"]["PreToolUse"][0]["matcher"] = matcher
+                store.write_text(json.dumps(original))
+                result = self.run_installer("--skip-dev-protocol")
+                self.assertEqual(
+                    result.returncode, expected, result.stdout + result.stderr
+                )
+        self.assertFalse((self.home / "node-calls").exists())
+
+    def test_regex_matcher_still_refuses_when_engine_is_unavailable(self):
+        self.real_verifier()
+        store = self.home / ".claude/settings.json"
+        value = json.loads(store.read_text())
+        value["hooks"]["PreToolUse"][0]["matcher"] = "^Bash$"
+        store.write_text(json.dumps(value))
+        for failure in ("exit 97", "exec python3 -c 'import time; time.sleep(10)'"):
+            with self.subTest(failure=failure):
+                self.script(
+                    "node",
+                    f'#!/bin/sh\nif [ "${{1:-}}" = -e ]; then {failure}; fi\necho stub-version\n',
+                )
+                result = self.run_installer("--skip-dev-protocol")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("10/11 passed", result.stdout)
+
     def test_verifier_regex_matcher_and_exact_invoked_script(self):
         self.real_verifier()
         store = self.home / ".claude/settings.json"
         for matcher, command, expected in (
+            ("^Bash$", "python3 $HOME/.claude/hooks/commit-gate.py", 0),
             ("Bash|Read", "python3 $HOME/.claude/hooks/commit-gate.py", 0),
             ("Bash", "python3 ~/.claude/hooks/commit-gate.py", 0),
             ("Bash", f"python3 {self.home}/.claude/hooks/commit-gate.py", 0),

@@ -41,6 +41,9 @@ A matcher contains a nested `hooks` list. This registers the installed commit ga
 Merge into existing settings, do not replace unrelated entries. The compiler itself
 has a 60-second timeout. Select a hook timeout longer than that to receive its verdict.
 The phase-5 check verifies the script and Bash registration, not live firing.
+Literal tool-name matchers are checked directly. Regular-expression matchers use Node's
+JavaScript engine; an unavailable engine, invalid expression or five-second timeout fails
+the registration check.
 
 ## Available examples
 
@@ -86,5 +89,8 @@ are refused. Lease pushes using `--repo`, extra-destination or deletion options 
 or the protected destinations `main`, `master` and `HEAD` are refused. Ordinary pushes
 using the supported full option names remain allowed. Quoted or escaped punctuation is
 treated as a literal argument; actual shell separators still divide commands.
+Inspected pushes with inline Git configuration (`-c` or `--config-env`) are refused because
+configuration can add force or mirror behavior. The hook does not resolve stored repository
+configuration; branch protections and server-side policy remain necessary.
 Keep credentials outside tracked settings and process arguments. Review optional model calls
 against your data rules and budget before enabling them.

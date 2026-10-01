@@ -21,6 +21,17 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_inline_git_configuration_cannot_hide_push_effects(self):
+        for option in (
+            "-c remote.origin.mirror=true",
+            "-cremote.origin.mirror=true",
+            "-c remote.origin.push=+feature:refs/heads/main",
+            "--config-env remote.origin.mirror=FIXTURE",
+            "--config-env=remote.origin.push=FIXTURE",
+        ):
+            with self.subTest(option=option):
+                self.assertEqual(self.decision(f"git {option} push origin"), "deny")
+
     def test_push_option_value_is_not_a_force_flag(self):
         for option in ("-oflag", "-o flag", "--push-option=flag", "--push-option flag"):
             with self.subTest(option=option):
