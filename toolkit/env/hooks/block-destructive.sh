@@ -95,9 +95,11 @@ for index, word in enumerate(words):
             pos += 2
         elif flag.startswith(("-c", "-C", "--git-dir=", "--work-tree=", "--config-env=", "--namespace=", "--exec-path=", "--attr-source=")):
             pos += 1
-        elif flag in ("--no-pager", "--paginate", "--no-optional-locks", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-replace-objects", "--no-lazy-fetch", "--bare"):
+        elif flag in ("-P", "-p", "--no-advice", "--no-pager", "--paginate", "--no-optional-locks", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-replace-objects", "--no-lazy-fetch", "--bare"):
             pos += 1
         else:
+            if flag.startswith("-") and "push" in args[pos:]:
+                deny("unsupported Git option before push")
             break
     if pos >= len(args) or args[pos] != "push":
         continue

@@ -113,6 +113,15 @@ class DestructiveHookTests(unittest.TestCase):
             self.decision("git push --force-with-lease --unknown value origin"), "deny"
         )
 
+    def test_global_git_options_cannot_skip_push_inspection(self):
+        for option in ("-P", "-p", "--no-advice", "--future-global"):
+            with self.subTest(option=option):
+                self.assertEqual(
+                    self.decision(f"git {option} push --force origin main"), "deny"
+                )
+        for option in ("-P", "-p", "--no-advice"):
+            self.assertEqual(self.decision(f"git {option} push origin main"), "allow")
+
 
 class CommitGateTests(unittest.TestCase):
     def test_both_shipped_copies_are_identical(self):
