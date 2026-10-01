@@ -27,6 +27,11 @@ export default function MCPServersPage() {
         </h2>
       </ScrollReveal>
 
+      <Callout title="Project registration">
+        Add each example to .mcp.json in your project root. Merge its mcpServers
+        entry with existing registrations so other servers stay configured.
+      </Callout>
+
       <div className="space-y-6 mb-16">
         {mcpServers.map((server, i) => (
           <ScrollReveal key={server.slug} delay={i * 0.06}>
@@ -45,9 +50,13 @@ export default function MCPServersPage() {
                 </Callout>
               )}
               <CodeBlock
-                code={JSON.stringify({ [server.slug]: server.config }, null, 2)}
+                code={JSON.stringify(
+                  { mcpServers: { [server.slug]: server.config } },
+                  null,
+                  2,
+                )}
                 language="json"
-                filename="~/.claude/settings.json"
+                filename=".mcp.json"
               />
             </Card>
           </ScrollReveal>

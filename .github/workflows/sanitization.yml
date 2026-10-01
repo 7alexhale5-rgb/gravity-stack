@@ -49,3 +49,4 @@ jobs:
           npm run lint
           npx tsc --noEmit
           npm run build
+          python3 ../tests/check_rendered_mcp.py
