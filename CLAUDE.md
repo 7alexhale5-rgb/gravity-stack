@@ -5,18 +5,21 @@
 This repo follows ICM (Jake Van Clief's folder method): this file routes, each room's
 `CONTEXT.md` holds its contract.
 
-| Task                                                   | Go to        | Read                                         | Skills            |
-| ------------------------------------------------------ | ------------ | -------------------------------------------- | ----------------- |
-| Change a docs-site route, component, or the data layer | `site/`      | [site/CONTEXT.md](site/CONTEXT.md)           | none              |
-| Change or run a setup script                           | `toolkit/`   | [toolkit/CONTEXT.md](toolkit/CONTEXT.md)     | none              |
-| Write or update a deep-dive doc                        | `docs/`      | [docs/CONTEXT.md](docs/CONTEXT.md)           | none              |
-| Pick up or update the implementation plan              | `.planning/` | [.planning/CONTEXT.md](.planning/CONTEXT.md) | `/planning-stack` |
-| Verify installer behavior and public-file safety | `tests/` | [tests/CONTEXT.md](tests/CONTEXT.md) | none |
+| Task                                                   | Go to            | Read                                                 | Skills            |
+| ------------------------------------------------------ | ---------------- | ---------------------------------------------------- | ----------------- |
+| Change a docs-site route, component, or the data layer | `site/`          | [site/CONTEXT.md](site/CONTEXT.md)                   | none              |
+| Change or run a setup script                           | `toolkit/`       | [toolkit/CONTEXT.md](toolkit/CONTEXT.md)             | none              |
+| Write or update a deep-dive doc                        | `docs/`          | [docs/CONTEXT.md](docs/CONTEXT.md)                   | none              |
+| Pick up or update the implementation plan              | `.planning/`     | [.planning/CONTEXT.md](.planning/CONTEXT.md)         | `/planning-stack` |
+| Verify installer behavior and public-file safety       | `tests/`         | [tests/CONTEXT.md](tests/CONTEXT.md)                 | none              |
+| Run or extend the golden-dataset skill evals           | `.promptfoo/`    | [.promptfoo/CONTEXT.md](.promptfoo/CONTEXT.md)       | none              |
+| Change a design token or the visual spec               | `design-system/` | [design-system/CONTEXT.md](design-system/CONTEXT.md) | none              |
+| Change a CI workflow                                   | `.github/`       | [.github/CONTEXT.md](.github/CONTEXT.md)             | none              |
 
-Root files stay where their tools expect them: `LICENSE` (public repo requirement),
-`README.md`/`CHANGELOG.md` (public-facing), `.promptfoo/` (eval harness, its own
-`promptfooconfig.yaml`). `.promptfoo/`, `design-system/`, `routines/` are not yet ICM rooms —
-read them directly.
+[CONTEXT.md](CONTEXT.md) is the system map across these rooms. Root files stay where their
+tools expect them: `LICENSE` (public repo requirement), `README.md`/`CHANGELOG.md`
+(public-facing), `design_spec.json` (the token spec the `design-system/` room reads),
+`AGENTS.md` (symlink to this file). `.promptfoo/` keeps its own `promptfooconfig.yaml`.
 
 ## Naming
 
