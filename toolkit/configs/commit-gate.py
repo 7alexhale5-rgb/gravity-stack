@@ -2,7 +2,6 @@
 """Claude PreToolUse hook: block commits when TypeScript checking cannot pass."""
 
 import json
-import io
 import os
 from pathlib import Path
 import shlex
@@ -10,47 +9,40 @@ import subprocess
 import sys
 
 
-class CommentBoundaryStream(io.StringIO):
-    """shlex may consume a comment, but must leave its shell newline separator."""
-
-    def readline(self, size=-1):
-        line = super().readline(size)
-        if line.endswith("\n"):
-            self.seek(self.tell() - 1)
-            return line[:-1]
-        return line
-
-
 def shell_continuations(command):
-    """Remove shell line continuations without altering quoted literals or comments."""
+    """Remove shell comments/continuations, preserving literal words and newlines."""
     output = []
     quote = ""
     comment = False
+    word_start = True
     position = 0
     while position < len(command):
         char = command[position]
         if comment:
-            output.append(char)
-            comment = char != "\n"
+            if char == "\n":
+                output.append(char)
+                comment = False
+                word_start = True
         elif char == "\\" and quote != chr(39) and position + 1 < len(command):
             following = command[position + 1]
             if following != "\n":
                 output.extend((char, following))
+                word_start = False
             position += 2
             continue
-        else:
-            if char in (chr(39), chr(34)):
-                if not quote:
-                    quote = char
-                elif quote == char:
-                    quote = ""
-            elif (
-                char == "#"
-                and not quote
-                and (not output or output[-1] in " \t\r\n;&|()<>")
-            ):
-                comment = True
+        elif quote:
             output.append(char)
+            if char == quote:
+                quote = ""
+        elif char in (chr(39), chr(34)):
+            output.append(char)
+            quote = char
+            word_start = False
+        elif char == "#" and word_start:
+            comment = True
+        else:
+            output.append(char)
+            word_start = char in " \t\r\n;&|()<>"
         position += 1
     return "".join(output)
 
@@ -62,12 +54,13 @@ def git_executable(word):
 def commit_directories(command, base):
     """Resolve literal cd/Git options; never execute the submitted shell command."""
     lexer = shlex.shlex(
-        CommentBoundaryStream(shell_continuations(command)),
+        shell_continuations(command),
         posix=True,
         punctuation_chars=";&|()<>\n",
     )
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
+    lexer.commenters = ""
     words = list(lexer)
     if not any(git_executable(word) for word in words):
         return []

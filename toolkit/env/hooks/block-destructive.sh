@@ -2,7 +2,6 @@
 # Claude PreToolUse Bash hook. Inspect literal commands; do not execute them.
 python3 -c '
 import json
-import io
 from pathlib import Path
 import re
 import shlex
@@ -30,47 +29,40 @@ if re.search(r"git\s+clean\s+-[a-zA-Z]*f", command):
 if re.search(r"echo.*(_KEY|_SECRET|_TOKEN|PASSWORD).*\|", command):
     deny("possible credential exposure through a pipe")
 
-class CommentBoundaryStream(io.StringIO):
-    """shlex may consume a comment, but must leave its shell newline separator."""
-
-    def readline(self, size=-1):
-        line = super().readline(size)
-        if line.endswith("\n"):
-            self.seek(self.tell() - 1)
-            return line[:-1]
-        return line
-
-
 def shell_continuations(command):
-    """Remove shell line continuations without altering quoted literals or comments."""
+    """Remove shell comments/continuations, preserving literal words and newlines."""
     output = []
     quote = ""
     comment = False
+    word_start = True
     position = 0
     while position < len(command):
         char = command[position]
         if comment:
-            output.append(char)
-            comment = char != "\n"
+            if char == "\n":
+                output.append(char)
+                comment = False
+                word_start = True
         elif char == "\\" and quote != chr(39) and position + 1 < len(command):
             following = command[position + 1]
             if following != "\n":
                 output.extend((char, following))
+                word_start = False
             position += 2
             continue
-        else:
-            if char in (chr(39), chr(34)):
-                if not quote:
-                    quote = char
-                elif quote == char:
-                    quote = ""
-            elif (
-                char == "#"
-                and not quote
-                and (not output or output[-1] in " \t\r\n;&|()<>")
-            ):
-                comment = True
+        elif quote:
             output.append(char)
+            if char == quote:
+                quote = ""
+        elif char in (chr(39), chr(34)):
+            output.append(char)
+            quote = char
+            word_start = False
+        elif char == "#" and word_start:
+            comment = True
+        else:
+            output.append(char)
+            word_start = char in " \t\r\n;&|()<>"
         position += 1
     return "".join(output)
 
@@ -80,9 +72,10 @@ def git_executable(word):
 
 
 try:
-    lexer = shlex.shlex(CommentBoundaryStream(shell_continuations(command)), posix=True, punctuation_chars=";&|()<>\n")
+    lexer = shlex.shlex(shell_continuations(command), posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
+    lexer.commenters = ""
     words = list(lexer)
 except ValueError:
     sys.exit(0)
@@ -117,8 +110,34 @@ for index, word in enumerate(words):
         continue
     if hard_force or any(a in ("--all", "--mirror") for a in push_args):
         deny("unprotected force push")
-    positionals = [a for a in push_args if not a.startswith("-")]
-    refs = positionals[1:]  # first positional is the remote
+    positionals = []
+    remote_option = False
+    position = 0
+    while position < len(push_args):
+        arg = push_args[position]
+        if arg == "--":
+            positionals.extend(push_args[position + 1:])
+            break
+        if arg in ("-o", "--push-option", "--repo", "--receive-pack", "--exec"):
+            if position + 1 >= len(push_args):
+                deny("push option needs a value")
+            remote_option |= arg == "--repo"
+            position += 2
+            continue
+        if arg.startswith(("--push-option=", "--repo=", "--receive-pack=", "--exec=")) or (arg.startswith("-o") and len(arg) > 2):
+            remote_option |= arg.startswith("--repo=")
+        elif arg.startswith("--force-with-lease=") or arg in (
+            "--force-with-lease", "-u", "--set-upstream", "-n", "--dry-run",
+            "-v", "--verbose", "-q", "--quiet", "--atomic", "--signed",
+            "--no-signed", "--verify", "--no-verify", "--follow-tags",
+        ):
+            pass
+        elif arg.startswith("-"):
+            deny("unsupported force-push option; use explicit ordinary refs")
+        else:
+            positionals.append(arg)
+        position += 1
+    refs = positionals if remote_option else positionals[1:]
     if not refs:
         deny("force push has no explicit feature ref")
     for ref in refs:

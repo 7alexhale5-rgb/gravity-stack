@@ -80,6 +80,39 @@ class DestructiveHookTests(unittest.TestCase):
             self.decision("git push --force-with-lease origin feature\ntrue"), "allow"
         )
 
+    def test_literal_hashes_do_not_hide_guarded_commands(self):
+        for value in ("#", "'#'", '"#"', "\\#"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.decision(
+                        f"git -c core.commentChar={value} push --force origin main"
+                    ),
+                    "deny",
+                )
+
+    def test_push_option_values_do_not_supply_fake_refspecs(self):
+        for option in (
+            "-o ci.skip",
+            "--push-option ci.skip",
+            "--push-option=ci.skip",
+            "-oci.skip",
+        ):
+            for placement in (f"{option} origin", f"origin {option}"):
+                with self.subTest(option=option, placement=placement):
+                    self.assertEqual(
+                        self.decision(f"git push --force-with-lease {placement}"),
+                        "deny",
+                    )
+                    self.assertEqual(
+                        self.decision(
+                            f"git push --force-with-lease {placement} feature"
+                        ),
+                        "allow",
+                    )
+        self.assertEqual(
+            self.decision("git push --force-with-lease --unknown value origin"), "deny"
+        )
+
 
 class CommitGateTests(unittest.TestCase):
     def test_both_shipped_copies_are_identical(self):
@@ -200,6 +233,20 @@ class CommitGateTests(unittest.TestCase):
                 with self.subTest(hook=hook, command=command):
                     self.assertEqual(self.run_hook(hook, command, failure), (2, 1))
 
+    def test_literal_hashes_do_not_hide_compilation(self):
+        failure = subprocess.CompletedProcess([], 1, "fixture failure", "")
+        for hook in COMMIT_HOOKS:
+            for value in ("#", "'#'", '"#"', "\\#"):
+                with self.subTest(hook=hook, value=value):
+                    self.assertEqual(
+                        self.run_hook(
+                            hook,
+                            f"git -c core.commentChar={value} commit -m test",
+                            failure,
+                        ),
+                        (2, 1),
+                    )
+
     def test_continuations_preserve_shell_literal_content(self):
         sources = [hook.read_text() for hook in COMMIT_HOOKS]
         sources.append(
@@ -214,7 +261,7 @@ class CommitGateTests(unittest.TestCase):
             ("git -C 'si\\\nte' commit", "git -C 'si\\\nte' commit"),
             (
                 "git status # inspect\\\n git commit",
-                "git status # inspect\\\n git commit",
+                "git status \n git commit",
             ),
             ("git status \\\\\ngit commit", "git status \\\\\ngit commit"),
         )
