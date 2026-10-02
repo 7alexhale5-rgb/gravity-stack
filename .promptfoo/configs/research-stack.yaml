@@ -2,7 +2,7 @@ description: "Golden dataset — Research Stack"
 providers:
   - id: anthropic:messages:claude-sonnet-5-5
     config:
-      max_tokens: 2048
+      max_tokens: 4096
 prompts:
   - file://../prompts/research-stack.txt
 tests: "../golden/research-stack.yaml"

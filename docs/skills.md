@@ -97,9 +97,34 @@ Skills for gathering information.
 
 | Skill | What It Does |
 |-------|-------------|
-| `/research-stack` | Structured research workflow: define question, gather sources, synthesize findings, produce report. |
+| `/research-stack` | Decision-first research: splits the topic into sub-questions, fires only relevant sources in tiered parallel rounds, runs skeptic and gap checks, validates, and reports a decision answer with source attribution. |
 | `/defuddle` | Cut through confusion. When you are stuck or overwhelmed, this skill helps untangle the problem into manageable pieces. |
 | `/last30days` | Summarize what happened in the last 30 days: commits, issues closed, features shipped, patterns emerging. |
+
+### Focus tags (research-stack)
+
+`--focus <tags>` or `#tag` shorthand adds one source block per tag (Round 2F) and one report addendum per tag. Up to 4 tags per run.
+
+| Tag | Addendum |
+|-----|----------|
+| `seo` | SEO scorecard |
+| `content` | Content and creative angles |
+| `market` | Vendor and competitor matrix |
+| `ui-ux` | Pattern references |
+| `a11y` | Accessibility checklist |
+| `perf` | Performance budget |
+| `security` | Threat and advisory table |
+| `devtools` | Library decision matrix |
+| `ai-agents` | Model and eval evidence |
+| `data-infra` | Data and infra trade-offs |
+| `comms` | Telephony and messaging plan |
+| `legal` | Legal authority table |
+
+Bundles: `#launch` (seo, perf, a11y, content), `#ship-audit` (security, perf, a11y), `#competitive` (market, seo, content), `#build-pick` (devtools, security). Add `--target <url|repo|path>` to run live checks on your own asset. Paid tools are optional; each tag falls back to free sources.
+
+```text
+/research-stack "pricing page redesign" #launch --target https://example.com
+```
 
 ---
 

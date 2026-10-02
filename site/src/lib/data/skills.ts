@@ -8,7 +8,7 @@ export interface Skill {
 
 export const skills: Skill[] = [
   { name: "Planning Stack", command: "/planning-stack", category: "planning", description: "Multi-source planning pipeline. Flags: --shallow, --deep, --tech, --devil.", origin: "custom" },
-  { name: "Research Stack", command: "/research-stack", category: "research", description: "Hybrid multi-source research using web search, documentation fetching, codebase analysis, and synthesis.", origin: "custom" },
+  { name: "Research Stack", command: "/research-stack", category: "research", description: "Decision-first research pipeline. Splits a topic into 3-6 sub-questions, fires only the relevant sources in tiered parallel rounds, compresses locally, runs skeptic and gap checks, and validates the report. Focus tags (--focus seo,security or #seo) add a tool block and addendum per domain; --target audits your own site or repo. Free-first, paid tools optional. Flags: --deep, --free, --validate, --auto-refine, --youtube, --notes, --no-ask.", origin: "custom" },
   { name: "Project Progress", command: "/project-progress", category: "management", description: "Show project progress dashboard with phase status, blockers, and completion percentage.", origin: "custom" },
   { name: "Test-Driven Development", command: "/test-driven-development", category: "testing", description: "Enforces write-tests-first methodology with verification loops.", origin: "plugin" },
   { name: "Feature Dev", command: "/feature-dev:feature-dev", category: "development", description: "Guided feature development with codebase exploration and architecture focus.", origin: "marketplace" },

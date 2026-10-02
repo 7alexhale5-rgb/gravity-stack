@@ -17,7 +17,7 @@ These are the backbone. Each takes an intent → produces a verified deliverable
 |---|---|
 | `planning-stack` | Multi-source planning with SCATTER/PLAN/VERIFY phases. Auto-runs at `--deep` depth per my CARL rules. |
 | `build-stack` | Executes an approved plan with interleaved verification checkpoints, context budget management, and parallel sub-agents for LARGE work. |
-| `research-stack` | Multi-source research pipeline (Perplexity, Gemini, Firecrawl, Groq compression). Produces a synthesized report with source attribution. |
+| `research-stack` | v3 decision-first research. Splits the topic into 3-6 sub-questions (up to 8 with focus lenses), fires only relevant sources in tiered rounds (reliable, internal connectors, extended, one block per focus tag, gap fill), compresses locally with Ollama, runs skeptic, cross-source and gap passes, then validates the report. Focus tags (`--focus seo,security`, `#seo`, bundles like `#launch`) add domain tools and an addendum; `--target <url\|repo\|path>` runs live audits on your own asset. Free-first: paid tools are optional with free fallbacks. |
 | `review-stack` | Four-layer post-implementation review (static, pattern, contextual, runtime). Outputs SHIP IT / FIX / BLOCKED verdict. |
 | `design-stack` | UI/UX generation + critique. Figma input path, Playwright verification, multi-variant generation with Muapi, multi-model critique via `/council`. |
 | `brainstorm-stack` | Pre-planning questioning pipeline. Runs before planning-stack on high-uncertainty work. |
