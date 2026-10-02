@@ -40,10 +40,15 @@ skill really ships. Paths relative to `.promptfoo/` unless noted.
 ## Outputs
 
 - Changed `prompts/`, `golden/` or `configs/` files.
-- Run results in `.promptfoo/reports/<skill>-latest.json` (gitignored, never committed).
+- One-skill results use the config's `.promptfoo/reports/<skill>-latest.json`.
+- All-skills batches retain private JSON reports and complete CLI logs in a unique
+  `.promptfoo/reports/run.XXXXXX/` directory, printed before evaluation starts.
+  `.promptfoo/reports/latest-run/<skill>.json` and `<skill>.log` point to the latest
+  batch, including failed batches. A CLI failure without JSON leaves its log only;
+  it never reuses an older report. All results are gitignored, never committed.
 
 ## Human check
 
-Alex reads the failing cases in the latest report and compares changed goldens against the
+Alex reads the failing cases and CLI logs in the printed batch directory and compares changed goldens against the
 upstream skill's format. Pass: every assert matches what the skill emits, and the run shows
 no failures or errors. Fail: fix the prompt or the golden before merge.

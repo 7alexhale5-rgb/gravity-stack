@@ -10,8 +10,23 @@ total_pass=0
 total_fail=0
 total_error=0
 run_error=0
-results_dir=$(mktemp -d)
-trap 'rm -rf "$results_dir"' EXIT
+# Provider output may contain private task data. Retain each batch privately,
+# including CLI failures, instead of deleting the only inspectable evidence.
+umask 077
+mkdir -p reports
+results_dir=$(mktemp -d "$PWD/reports/run.XXXXXX")
+python3 - "$results_dir" <<'PY'
+import os, sys
+from pathlib import Path
+batch = Path(sys.argv[1])
+latest = batch.parent / 'latest-run'
+if latest.exists() and not latest.is_symlink():
+    sys.exit('Refusing to replace a non-symlink latest-run path')
+pointer = batch / 'latest-pointer'
+pointer.symlink_to(batch.name)
+os.replace(pointer, latest)
+PY
+echo "  Retained batch reports and logs: $results_dir"
 
 for config in promptfooconfig.yaml configs/*.yaml; do
   skill=$(basename "$config" .yaml)
