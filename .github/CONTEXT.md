@@ -25,5 +25,5 @@ One job: keep CI running the repo's own test commands on every push and pull req
 
 ## Human check
 
-Alex reviews the CI results on the exact pull request commit. Pass: both jobs green on both
-operating systems. Fail: failures block merging.
+Alex reviews the CI results on the exact pull request commit. Pass: `scan` green, and `installer`
+green on ubuntu and macos. Fail: failures block merging.

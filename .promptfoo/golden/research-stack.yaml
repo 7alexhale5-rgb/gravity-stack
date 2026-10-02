@@ -40,7 +40,7 @@
     - type: contains-any
       value: ["SEO scorecard", "SEO Scorecard"]
     - type: contains-any
-      value: ["[DFS", "[SPY", "[SEM", "[AHR", "[GSC", "[PSI", "[CRUX", "[SCHEMA", "[AEO", "[FC", "free fallback", "unavailable"]
+      value: ["[DFS", "[SPY", "[SEM", "[AHR", "[GSC", "[PSI", "[CRUX", "[SCHEMA", "[AEO", "[FC"]
     - type: llm-rubric
       value: "Has an SEO scorecard addendum. Either cites at least one SEO source tag ([DFS] [SPY] [SEM] [AHR] [GSC] [PSI] [CRUX] [SCHEMA] [AEO] [FC]) or states explicitly that paid SEO tools were unavailable and names the free fallbacks used."
 
@@ -62,6 +62,6 @@
     - type: contains-any
       value: ["Telephony and messaging plan", "Telephony and Messaging Plan"]
     - type: contains-any
-      value: ["[RC", "[TW", "[AIR", "[CR", "[FCC", "free fallback", "unavailable"]
+      value: ["[RC", "[TW", "[TNX", "[AIR", "[DP", "[CR", "[FCC"]
     - type: llm-rubric
       value: "Has a Telephony and messaging plan addendum with one row per calling mode (build or buy, event path, compliance prerequisite). Either cites at least one comms source tag ([RC] [TW] [TNX] [AIR] [DP] [CR] [FCC]) or states explicitly that paid comms tools were unavailable and names the free fallbacks used."

@@ -34,5 +34,4 @@ A file existing is not approval or proof of current operation.
 
 From this checkout, run `python3 -m unittest discover -s tests -p 'test_*.py'` and
 `bash tests/test_sanitization.sh`.
-Use this worktree’s project path when checking a client branch.
-Record the command and result in the task receipt; keep failed work open.
+Record the command and result in the pull request; keep failed work open.

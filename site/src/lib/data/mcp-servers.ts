@@ -93,7 +93,7 @@ export const researchServers: MCPServer[] = [
     priority: "optional",
     apiKeyRequired: true,
     description: "Paid SERP, keyword and backlink data. Used by the seo focus tag; free fallbacks are Search Console, PageSpeed and site-scoped search.",
-    config: { command: "npm", args: ["exec", "dataforseo-mcp-server"], env: { DATAFORSEO_USERNAME: "your-login", DATAFORSEO_PASSWORD: "your-password" } },
+    config: { command: "npm", args: ["exec", "dataforseo-mcp-server@3.1.2"], env: { DATAFORSEO_USERNAME: "your-login", DATAFORSEO_PASSWORD: "your-password" } },
   },
   {
     name: "Mobbin",
@@ -165,7 +165,7 @@ export const researchServers: MCPServer[] = [
     priority: "optional",
     apiKeyRequired: false,
     description: "Drive Chrome and record performance traces. Used by the perf focus tag in audit mode (--target).",
-    config: { command: "npm", args: ["exec", "chrome-devtools-mcp@latest"] },
+    config: { command: "npm", args: ["exec", "chrome-devtools-mcp@1.10.1"] },
   },
 ];
 
@@ -176,9 +176,9 @@ export const cloudServers: { name: string; description: string }[] = [
 ];
 
 export function getServersByType(type: MCPServer["type"]): MCPServer[] {
-  return mcpServers.filter((s) => s.type === type);
+  return [...mcpServers, ...researchServers].filter((s) => s.type === type);
 }
 
 export function getServersByPriority(priority: MCPServer["priority"]): MCPServer[] {
-  return mcpServers.filter((s) => s.priority === priority);
+  return [...mcpServers, ...researchServers].filter((s) => s.priority === priority);
 }

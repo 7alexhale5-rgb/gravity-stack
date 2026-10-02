@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/PageHeader";
 
 export const metadata = {
   title: "MCP Servers",
-  description: "7+3 MCP servers connecting Claude to browsers, search engines, memory, and more.",
+  description: "7+3 core MCP servers connecting Claude to browsers, search engines, memory, and more, plus optional research servers.",
 };
 
 export default function MCPServersPage() {
@@ -42,8 +42,9 @@ export default function MCPServersPage() {
       </ScrollReveal>
       <ScrollReveal delay={0.1}>
         <p className="text-dim mb-6">
-          Optional servers that Research Stack focus tags call when they are connected. Every tag has
-          a free fallback, so the pipeline still runs without them.
+          Optional add-ons, not part of the 7+3 core. Research Stack focus tags call them when they are
+          connected, and every tag has a free fallback, so the pipeline still runs without them. Source:
+          research-stack <code>references/tool-registry.json</code>; see docs/mcp-servers.md.
         </p>
       </ScrollReveal>
       <div className="space-y-6 mb-16">
@@ -91,8 +92,8 @@ function ServerCard({ server, delay }: { server: MCPServer; delay: number }) {
         </div>
         <p className="text-sm text-dim">{server.description}</p>
         {server.apiKeyRequired && (
-          <Callout variant="warning" title="API Key Required">
-            This server requires an API key set as an environment variable.
+          <Callout variant="warning" title="Credentials Required">
+            This server needs credentials (an API key or a sign-in). See its description.
           </Callout>
         )}
         <CodeBlock
