@@ -28,6 +28,7 @@ const variants = {
   npm: "bg-volt/10 text-volt border-volt/20",
   sse: "bg-nova/10 text-nova border-nova/20",
   cloud: "bg-ice/10 text-ice border-ice/20",
+  cli: "bg-heat/10 text-heat border-heat/20",
 } as const;
 
 export function Badge({

@@ -281,6 +281,26 @@ Interact with Slack workspaces.
 
 ---
 
+## Research Servers (optional)
+
+Optional add-ons used by Research Stack focus tags. They are not part of the 7+3 core, and every tag has a
+free fallback. Canonical list, detection rules and fallbacks: research-stack `references/tool-registry.json`
+(github.com/7alexhale5-rgb/research-stack). The site's Research Servers section renders these entries from
+`site/src/lib/data/mcp-servers.ts`.
+
+| Server | Focus tag | Auth |
+| --- | --- | --- |
+| Exa | market | credentials (key or sign-in) |
+| DataForSEO | seo | credentials (key or sign-in) |
+| Mobbin | ui-ux | credentials (key or sign-in) |
+| Refero | ui-ux | credentials (key or sign-in) |
+| Socket | several | none |
+| Semgrep | security | none |
+| Context7 | devtools | none |
+| DeepWiki | devtools | none |
+| Figma | ui-ux | account sign-in |
+| Chrome DevTools | perf | none |
+
 ## Full Configuration Example
 
 Here is a complete `mcpServers` block with all 10 servers:
