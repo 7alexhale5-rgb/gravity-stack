@@ -55,37 +55,255 @@ def git_executable(word):
 def shell_tokens(command):
     """Keep literal punctuation distinct from shell operators after decoding."""
 
-    def harmless_shell_diagnostic(command):
-        """Recognize a small literal builtin grammar, without executing its input."""
-        if re.fullmatch(r"\s*echo\s+\"\$\(\s*pwd\s*\)\"\s*", command):
+    def inspect_substitutions(text, depth=0, quote_sensitive=True):
+        """Recursively inspect executable substitutions, retaining word expansion."""
+        if depth > 16:
+            raise ValueError("shell nesting exceeds inspection limit")
+        rewritten = []
+        quote = ""
+        position = 0
+        while position < len(text):
+            char = text[position]
+            if char == "\\" and quote != chr(39):
+                rewritten.append("\ue003")
+                rewritten.append(text[position : position + 2])
+                position += 2
+                continue
+            if quote == chr(39):
+                rewritten.append(char)
+                if char == quote:
+                    quote = ""
+                position += 1
+                continue
+            opening = text[position : position + 2]
+            substitution = opening in ("$(", "<(", ">(") and not text.startswith(
+                "$((", position
+            )
+            if char == "`" or substitution:
+                beginning = position + (1 if char == "`" else 2)
+                ending = beginning
+                balance = 1
+                inner_quote = ""
+                while ending < len(text):
+                    current = text[ending]
+                    if current == "\\" and inner_quote != chr(39):
+                        ending += 2
+                        continue
+                    if char == "`":
+                        if current == "`":
+                            break
+                    elif inner_quote:
+                        if current == inner_quote:
+                            inner_quote = ""
+                    elif current in (chr(39), chr(34)):
+                        inner_quote = current
+                    elif current == "(":
+                        balance += 1
+                    elif current == ")":
+                        balance -= 1
+                        if not balance:
+                            break
+                    ending += 1
+                if ending >= len(text):
+                    raise ValueError("unterminated executable shell substitution")
+                if possible_guarded(text[beginning:ending], depth + 1):
+                    return text, True
+                # Output is unknown, even when the generating command is safe.
+                rewritten.append("\ue002SUBSTITUTION")
+                position = ending + 1
+                continue
+            if quote_sensitive and char in (chr(39), chr(34)):
+                if not quote:
+                    rewritten.append("\ue003")
+                quote = "" if quote == char else (quote or char)
+            if (
+                char == "$"
+                and quote != chr(39)
+                or (
+                    not quote
+                    and char in "*?[{~"
+                    and not (
+                        char == "{"
+                        and position + 1 < len(text)
+                        and text[position + 1] in " \t\r\n;"
+                    )
+                )
+            ):
+                rewritten.append("\ue002")
+            rewritten.append(char)
+            position += 1
+        return "".join(rewritten), False
+
+    def possible_guarded(text, depth=0):
+        """Classify executable positions, not diagnostic names or printed data."""
+        prepared, hidden = inspect_substitutions(shell_continuations(text), depth)
+        if hidden:
             return True
-        if any(char in command for char in "$`\\"):
-            return False
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
+        lexer = shlex.shlex(prepared, posix=True, punctuation_chars=";&|()<>\n")
         lexer.whitespace = " \t\r"
         lexer.whitespace_split = True
         lexer.commenters = ""
-        at_head = True
-        seen_builtin = False
-        try:
-            for word in lexer:
-                if word in (";", "&&", "||", "\n"):
-                    at_head = True
-                elif at_head and word in ("if", "then", "else", "elif", "fi"):
+        words = list(lexer)
+        head = True
+        redirection_operand = False
+        wrapper = ""
+        wrapper_operand = False
+        index = 0
+        while index < len(words):
+            raw = words[index]
+            word = raw.replace("\ue002", "").replace("\ue003", "")
+            expanded = "\ue002" in raw
+            index += 1
+            if redirection_operand:
+                redirection_operand = False
+                continue
+            if raw and all(c in ";&|()<>\n" for c in raw):
+                if any(c in "<>" for c in raw):
+                    redirection_operand = True
+                else:
+                    head, wrapper = True, ""
+                continue
+            if not head:
+                continue
+            if (
+                word.isdigit()
+                and index < len(words)
+                and any(c in "<>" for c in words[index])
+            ):
+                continue
+            if wrapper_operand:
+                if expanded:
+                    return True
+                wrapper_operand = False
+                continue
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", word):
+                # Literal array contents are data; executable substitutions were
+                # already inspected recursively before this token walk.
+                if index < len(words) and words[index] == "(":
+                    balance = 1
+                    index += 1
+                    while index < len(words) and balance:
+                        punctuation = words[index]
+                        if punctuation and all(c in ";&|()<>\n" for c in punctuation):
+                            for offset, char in enumerate(punctuation):
+                                balance += (char == "(") - (char == ")")
+                                if not balance:
+                                    tail = punctuation[offset + 1 :]
+                                    if tail:
+                                        words.insert(index + 1, tail)
+                                    break
+                        index += 1
+                    if balance:
+                        return True
+                continue
+            if expanded:
+                return True
+            name = word if word == "." else Path(word).name
+            if name in {
+                "if",
+                "then",
+                "else",
+                "elif",
+                "fi",
+                "while",
+                "until",
+                "do",
+                "done",
+                "!",
+                "time",
+                "{",
+                "}",
+            }:
+                continue
+            if name in {"env", "exec", "command", "builtin"}:
+                wrapper = name
+                continue
+            if wrapper and word.startswith("-"):
+                if wrapper == "command" and word in ("-v", "-V"):
+                    head = False  # command lookup prints names; it does not run them.
                     continue
-                elif at_head:
-                    if word not in ("echo", "printf", "pwd", "true", "false", ":"):
-                        return False
-                    seen_builtin = True
-                    at_head = False
-                elif all(char in ";&|()<>\n" for char in word):
-                    return False
-        except ValueError:
-            return False
-        return seen_builtin
-
-    if harmless_shell_diagnostic(command):
-        return []
+                if (
+                    word in {"-u", "--unset"}
+                    and wrapper == "env"
+                    or word == "-a"
+                    and wrapper == "exec"
+                ):
+                    wrapper_operand = True
+                elif word == "--" or word in {
+                    "-i",
+                    "--ignore-environment",
+                    "-c",
+                    "-l",
+                    "-p",
+                    "-v",
+                    "-V",
+                }:
+                    pass
+                elif wrapper == "env" and (
+                    word.startswith("--unset=")
+                    or word.startswith("-u")
+                    and len(word) > 2
+                ):
+                    pass
+                else:
+                    return True
+                continue
+            if name in {"eval", "source", "."}:
+                return True
+            if name in {"bash", "sh", "zsh", "dash", "ksh"}:
+                # Only inspect a literal -c program; files, stdin and expanded
+                # program strings are opaque and remain conservatively guarded.
+                for program_index in range(index, len(words)):
+                    option = words[program_index].replace("\ue003", "")
+                    if option == "--command" or re.fullmatch(
+                        r"-[A-Za-z]*c[A-Za-z]*", option
+                    ):
+                        if program_index + 1 >= len(words):
+                            return True
+                        program = words[program_index + 1]
+                        if "\ue002" in program or possible_guarded(program, depth + 1):
+                            return True
+                        head = False
+                        break
+                    if all(c in ";&|()<>\n" for c in option) or not option.startswith(
+                        "-"
+                    ):
+                        break
+                if head:
+                    return True
+                continue
+            if git_executable(word):
+                while index < len(words):
+                    argument = words[index].replace("\ue003", "")
+                    if "\ue002" in argument:
+                        return True
+                    if any(c in "<>" for c in argument) or (
+                        argument.isdigit()
+                        and index + 1 < len(words)
+                        and any(c in "<>" for c in words[index + 1])
+                    ):
+                        return True
+                    if argument in ("-C", "-c", "--git-dir", "--work-tree"):
+                        index += 2
+                    elif argument.startswith(
+                        ("-C", "-c", "--git-dir=", "--work-tree=")
+                    ) or argument in (
+                        "--no-pager",
+                        "--paginate",
+                        "--no-optional-locks",
+                        "--literal-pathspecs",
+                        "--no-lazy-fetch",
+                        "--bare",
+                    ):
+                        index += 1
+                    elif argument in ("--version", "--help", "-h"):
+                        break
+                    else:
+                        if argument.startswith("-") or argument in ("commit", "push"):
+                            return True
+                        break
+            head = False
+        return False
 
     shells = {
         "bash",
@@ -132,6 +350,8 @@ def shell_tokens(command):
                     r"^[A-Za-z_][A-Za-z0-9_]*=", word
                 ):
                     raise ValueError("expanded executable cannot be inspected")
+                if Path(word).is_absolute():
+                    word = Path(word).name
                 if word in {
                     "if",
                     "then",
@@ -167,12 +387,22 @@ def shell_tokens(command):
                     continue
                 if wrapped and word.startswith("-"):
                     operands = {"env": {"-u", "--unset"}, "exec": {"-a"}}
-                    flags = {"env": {"-i", "--ignore-environment"}, "exec": {"-c", "-l"}, "command": {"-p", "-v", "-V"}, "builtin": set(), "time": {"-p"}}
+                    flags = {
+                        "env": {"-i", "--ignore-environment"},
+                        "exec": {"-c", "-l"},
+                        "command": {"-p", "-v", "-V"},
+                        "builtin": set(),
+                        "time": {"-p"},
+                    }
                     if word in operands.get(wrapper, set()):
                         operand_pending = True
                     elif word == "--" or word in flags.get(wrapper, set()):
                         pass
-                    elif wrapper == "env" and (word.startswith("--unset=") or word.startswith("-u") and len(word) > 2):
+                    elif wrapper == "env" and (
+                        word.startswith("--unset=")
+                        or word.startswith("-u")
+                        and len(word) > 2
+                    ):
                         pass
                     elif wrapper == "exec" and word.startswith("-a") and len(word) > 2:
                         pass
@@ -256,7 +486,7 @@ def shell_tokens(command):
         code.append(header)
         if documents:
             had_documents = True
-            if header_substitution:
+            if header_substitution and possible_guarded(header):
                 raise ValueError(
                     "heredoc in executable substitution cannot be inspected"
                 )
@@ -266,7 +496,9 @@ def shell_tokens(command):
             lexer.whitespace = " \t\r"
             lexer.whitespace_split = True
             lexer.commenters = "#"
-            if any(head in shells for head in executable_heads(list(lexer))):
+            if possible_guarded(header) and any(
+                head in shells for head in executable_heads(list(lexer))
+            ):
                 raise ValueError(
                     "heredoc supplied to executable shell cannot be inspected"
                 )
@@ -279,13 +511,19 @@ def shell_tokens(command):
                     "\r\n"
                 ) == delimiter:
                     break
-                if not quoted and ("$(" in body or "`" in body):
+                if (
+                    not quoted
+                    and ("$(" in body or "`" in body)
+                    and inspect_substitutions(body, quote_sensitive=False)[1]
+                ):
                     raise ValueError(
                         "executable heredoc substitution cannot be inspected"
                     )
             else:
                 raise ValueError("unterminated heredoc")
     command = "".join(code)
+    if not possible_guarded(command):
+        return []
     if had_documents:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>\n")
         lexer.whitespace = " \t\r"
@@ -510,6 +748,12 @@ def commit_directories(command, base):
             "eval",
             "source",
             ".",
+        ):
+            uncertain_cwd = True
+        if (
+            len(effective_args) > 1
+            and effective_args[0] == "printf"
+            and effective_args[1].startswith("-v")
         ):
             uncertain_cwd = True
         if assignment_count and assigned_args:

@@ -21,10 +21,16 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_general_non_git_substitutions_and_conditionals_are_allowed(self):
+        for command in ('echo "$(date)"', "if test -f package.json; then npm test; fi"):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "allow")
+
     def test_wrapper_option_operands_cannot_hide_executables(self):
         for prefix in (
             "env -u GRAVITY_UNUSED",
             "env --unset GRAVITY_UNUSED",
+            "/usr/bin/env -u GRAVITY_UNUSED",
             "exec -a diagnostic-name",
         ):
             self.assertEqual(
@@ -439,11 +445,87 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_general_unrelated_shell_syntax_is_not_a_git_operation(self):
+        commands = (
+            'echo "$(date)"',
+            'echo "$(printf \'%s\' "$(date)")"',
+            "if test -f package.json; then npm test; fi",
+            "if git status; then npm test; fi",
+            'for file in a b; do stat "$file"; done',
+            "node --version && python3 --version",
+            "printf '%s' ';' git commit",
+            "if command -v git >/dev/null; then npm test; fi",
+            "{ echo ok; date; }",
+            "values=('git' 'commit'); printf '%s' \"${values[0]}\"",
+            "bash -c 'date'",
+            "/usr/bin/env -u GRAVITY_UNUSED bash -c 'date'",
+            "echo '$(git commit -am x)'",
+            "printf '%s' 'if git commit -am x; then true; fi'",
+        )
+        destructive = DestructiveHookTests()
+        for command in commands:
+            with self.subTest(command=command):
+                for hook in COMMIT_HOOKS:
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+                self.assertEqual(destructive.decision(command), "allow")
+        for command in (
+            "bash -c 'date'; git commit -am x",
+            "bash -c 'date'; git push --force origin main",
+            'echo "$(printf "$(git commit -am x)")"',
+            'echo "$(printf "$(git push --force origin main)")"',
+            'echo "$(if test -f package.json; then "git" commit -am x; fi)"',
+            'echo "$(if test -f package.json; then "git" push --force origin main; fi)"',
+        ):
+            with self.subTest(hidden=command):
+                for hook in COMMIT_HOOKS:
+                    self.assertEqual(self.run_hook(hook, command), (2, 0))
+                self.assertEqual(destructive.decision(command), "deny")
+
+    def test_printf_variable_cdpath_cannot_compile_clean_wrong_repository(self):
+        for hook in COMMIT_HOOKS:
+            self.assertEqual(
+                self.run_hook(hook, "printf '%s' '-vCDPATH'; git commit -am x"), (0, 1)
+            )
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                clean = root / "target"
+                broken = root / "other" / "target"
+                for repo in (clean, broken):
+                    repo.mkdir(parents=True)
+                    (repo / ".git").mkdir()
+                    (repo / "tsconfig.json").write_text("{}")
+                payload = {
+                    "cwd": str(root),
+                    "tool_input": {
+                        "command": "printf -v CDPATH '%s' "
+                        + str(broken.parent)
+                        + "; cd target; git commit -am x"
+                    },
+                }
+
+                def compiler_result(*args, **kwargs):
+                    return subprocess.CompletedProcess(
+                        [], 0 if Path(kwargs["cwd"]) == clean else 1, "fixture", ""
+                    )
+
+                with (
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch(
+                        "subprocess.run", side_effect=compiler_result
+                    ) as compiler,
+                    mock.patch.dict(os.environ, {"CDPATH": ""}),
+                ):
+                    with self.assertRaises(SystemExit) as stopped:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(stopped.exception.code, 2)
+                compiler.assert_not_called()
+
     def test_wrapper_option_operands_cannot_hide_executables(self):
         for hook in COMMIT_HOOKS:
             for prefix in (
                 "env -u GRAVITY_UNUSED",
                 "env --unset GRAVITY_UNUSED",
+                "/usr/bin/env -u GRAVITY_UNUSED",
                 "exec -a diagnostic-name",
             ):
                 self.assertEqual(
@@ -1056,6 +1138,12 @@ class CommitGateTests(unittest.TestCase):
             tokenizers.append(namespace["shell_tokens"])
         for command in (
             "git status &&\ncd docs; git commit -m test",
+            'echo "$(date)"',
+            "if test -f package.json; then npm test; fi",
+            'echo "$(printf "$(git commit -am x)")"',
+            "/usr/bin/env -u UNUSED bash -c '\"git\" push --force origin main'",
+            "/usr/bin/env -u UNUSED bash -c '\"git\" commit -am x'",
+            "bash -c 'date'; git commit -am x",
             "! bash -c 'git push --force origin main'",
             "! bash -c 'git commit -m x'",
             "time bash -c '\"git\" push --force origin main'",
@@ -1103,7 +1191,7 @@ class CommitGateTests(unittest.TestCase):
                         outputs.append(("error", str(error)))
                 self.assertEqual(outputs[0], outputs[1])
                 self.assertEqual(outputs[0], outputs[2])
-                if outputs[0][0] != "error":
+                if outputs[0] and outputs[0][0] != "error":
                     expansion_flags = [
                         [getattr(word, "expanded", False) for word, _ in output]
                         for output in outputs
@@ -1113,7 +1201,7 @@ class CommitGateTests(unittest.TestCase):
                 if command.startswith("echo 'literal") or command.startswith(
                     r"echo \`"
                 ):
-                    self.assertNotEqual(outputs[0][0], "error")
+                    self.assertFalse(outputs[0] and outputs[0][0] == "error")
 
     def run_hook(self, hook, command, result=None, error=None, with_tsconfig=True):
         with tempfile.TemporaryDirectory(prefix="gravity-hook-") as directory:
