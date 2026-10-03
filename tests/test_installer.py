@@ -455,6 +455,59 @@ chmod +x "$dest/install.sh"
                 )
                 self.assertEqual(store.read_text(), original)
 
+    def test_hookstate32_disabled_or_async_gate_is_not_verified(self):
+        self.real_verifier()
+        store = self.home / ".claude/settings.json"
+        baseline = json.loads(store.read_text())
+        for field, value, expected in (
+            ("disableAllHooks", True, 1),
+            ("disableAllHooks", False, 0),
+            ("async", True, 1),
+            ("async", False, 0),
+            ("async", "false", 1),
+            ("asyncRewake", True, 1),
+        ):
+            with self.subTest(field=field, value=value):
+                current = json.loads(json.dumps(baseline))
+                target = (
+                    current
+                    if field == "disableAllHooks"
+                    else current["hooks"]["PreToolUse"][0]["hooks"][0]
+                )
+                target[field] = value
+                original = json.dumps(current)
+                store.write_text(original)
+                result = self.run_installer("--skip-dev-protocol")
+                self.assertEqual(
+                    result.returncode, expected, result.stdout + result.stderr
+                )
+                self.assertEqual(store.read_text(), original)
+
+    def test_hookstate32_current_handler_fields_match_actual_invocation(self):
+        self.real_verifier()
+        store = self.home / ".claude/settings.json"
+        baseline = json.loads(store.read_text())
+        absolute = str(self.home / ".claude/hooks/commit-gate.py")
+        for fields, expected in (
+            ({"args": []}, 1),
+            ({"if": "Bash(npm *)"}, 1),
+            ({"shell": "powershell"}, 1),
+            ({"command": "python3", "args": [absolute]}, 0),
+            ({"command": "python3", "args": ["-u", absolute]}, 0),
+            ({"command": "python3", "args": [absolute + ".bak"]}, 1),
+            ({"command": "python3", "args": [absolute, "ignored"]}, 1),
+        ):
+            with self.subTest(fields=fields):
+                current = json.loads(json.dumps(baseline))
+                current["hooks"]["PreToolUse"][0]["hooks"][0].update(fields)
+                original = json.dumps(current)
+                store.write_text(original)
+                result = self.run_installer("--skip-dev-protocol")
+                self.assertEqual(
+                    result.returncode, expected, result.stdout + result.stderr
+                )
+                self.assertEqual(store.read_text(), original)
+
     def test_commit_gate_timeout_exceeds_compiler_timeout(self):
         self.real_verifier()
         store = self.home / ".claude/settings.json"

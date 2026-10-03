@@ -560,6 +560,96 @@ def shell_tokens(command):
                             raise ValueError("unresolved input builtin integer assignment")
                 head = False
                 continue
+            if name == "trap":
+                end = index
+                while end < len(words) and not (
+                    words[end] and all(c in ";&|()<>\n" for c in words[end])
+                ):
+                    end += 1
+                operands = [value.replace("\ue003", "") for value in words[index:end]]
+                if operands and operands[0] == "--":
+                    operands = operands[1:]
+                if operands and operands[0] not in {"-p", "-l", "-", ""}:
+                    if any("\ue002" in value for value in operands) or possible_guarded(
+                        operands[0], depth + 1, supplied_program=True
+                    ):
+                        raise ValueError(
+                            "trap callback requires a separate literal invocation"
+                        )
+                index = end
+                head = False
+                continue
+            if name == "find":
+                position = index
+                valued = {
+                    "-name",
+                    "-iname",
+                    "-path",
+                    "-ipath",
+                    "-wholename",
+                    "-iwholename",
+                    "-regex",
+                    "-iregex",
+                    "-type",
+                    "-xtype",
+                    "-user",
+                    "-uid",
+                    "-group",
+                    "-gid",
+                    "-perm",
+                    "-size",
+                    "-links",
+                    "-inum",
+                    "-samefile",
+                    "-newer",
+                    "-anewer",
+                    "-cnewer",
+                    "-newermt",
+                    "-maxdepth",
+                    "-mindepth",
+                    "-mtime",
+                    "-ctime",
+                    "-atime",
+                    "-mmin",
+                    "-cmin",
+                    "-amin",
+                    "-fstype",
+                    "-printf",
+                    "-fprint",
+                    "-fprint0",
+                    "-fls",
+                }
+                while position < len(words):
+                    option = words[position].replace("\ue003", "")
+                    if option in {";", "&", "&&", "|", "||", "\n"}:
+                        break
+                    position += 1
+                    if option in valued:
+                        position += 1
+                    elif option == "-fprintf":
+                        position += 2
+                    elif option in {"-exec", "-execdir", "-ok", "-okdir"}:
+                        child = position
+                        while position < len(words) and words[position].replace(
+                            "\ue003", ""
+                        ) not in {";", "+"}:
+                            position += 1
+                        if position == len(words) or child == position:
+                            raise ValueError("unresolved find execution action")
+                        argv = [
+                            value.replace("\ue003", "")
+                            for value in words[child:position]
+                        ]
+                        if any("\ue002" in value for value in argv) or possible_guarded(
+                            shlex.join(argv), depth + 1, supplied_program=True
+                        ):
+                            raise ValueError(
+                                "find callback requires a separate literal invocation"
+                            )
+                        position += 1
+                index = position
+                head = False
+                continue
             if name == "let":
                 for operand in words[index:]:
                     if operand and all(c in ";&|()<>\n" for c in operand):
@@ -1124,7 +1214,6 @@ def shell_tokens(command):
             group.append((word, operator))
     return tokens
 
-
 try:
     tokens = shell_tokens(command)
 except ValueError:
@@ -1134,6 +1223,45 @@ if (any(git_executable(word) for word, operator in tokens if not operator)
         and any(word == "push" for word, operator in tokens if not operator)):
     if any(name.startswith("GIT_CONFIG") for name in os.environ):
         deny("inherited Git configuration environment cannot be safely inspected")
+    statements = []
+    current = []
+    for word, operator in tokens:
+        if operator and any(char in ";&|\n" for char in word):
+            if current:
+                statements.append(current)
+                current = []
+        else:
+            current.append(word)
+    if current:
+        statements.append(current)
+    prior_uncertain = False
+    for statement in statements:
+        argv = list(statement)
+        while argv and (argv[0] in ("builtin", "command") or argv[0] in ("--", "-p")):
+            argv.pop(0)
+        if not argv:
+            continue
+        name = Path(argv[0]).name
+        position = 1
+        if git_executable(argv[0]):
+            while position < len(argv):
+                flag = argv[position]
+                if flag in ("-C", "-c", "--git-dir", "--work-tree"):
+                    position += 2
+                elif flag.startswith(("-C", "-c", "--git-dir=", "--work-tree=")) or flag in ("--no-pager", "--no-optional-locks"):
+                    position += 1
+                else:
+                    break
+            operation = argv[position:]
+            if operation and operation[0] == "push" and prior_uncertain:
+                deny("push must run separately from preceding state-changing commands")
+            inert = (len(operation) == 3 and operation[0] == "config"
+                     and operation[1] in ("--get", "--get-all")
+                     and bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9.-]*", operation[2])))
+        else:
+            inert = name in ("echo", "printf", "true", "false", "pwd")
+        inert = inert and not any(getattr(value, "expanded", False) or value in ("<", ">", ">>", "<<", "<<<") for value in argv)
+        prior_uncertain |= not inert
     heads = []
     at_head = True
     mutating_printf = False

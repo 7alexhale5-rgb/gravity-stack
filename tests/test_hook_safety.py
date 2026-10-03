@@ -497,6 +497,85 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+
+    def test_callback32_actual_trap_and_find_use_only_fake_git(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(binary) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for operation in ("commit -am broken", "push --force origin main"):
+                for command in (
+                    "trap 'git " + operation + "' EXIT",
+                    "find . -prune -exec git " + operation + " \\;",
+                ):
+                    with self.subTest(command=command):
+                        log.write_text("")
+                        result = subprocess.run(
+                            ["bash", "-c", command],
+                            cwd=root,
+                            env=env,
+                            capture_output=True,
+                            timeout=5,
+                        )
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertIn(operation, log.read_text())
+                        if operation.startswith("commit"):
+                            for hook in COMMIT_HOOKS:
+                                self.assertEqual(self.run_hook(hook, command), (2, 0))
+                        else:
+                            self.assertEqual(
+                                DestructiveHookTests().decision(command), "deny"
+                            )
+
+    def test_callback32_trap_find_execution_and_printed_data(self):
+        for command in (
+            "trap 'git commit -am broken' EXIT",
+            "builtin trap 'git commit -am broken' EXIT",
+            "find . -prune -exec git commit -am broken \\;",
+        ):
+            for hook in COMMIT_HOOKS:
+                self.assertEqual(self.run_hook(hook, command), (2, 0), command)
+        for command in (
+            "trap 'git push --force origin main' EXIT",
+            "find . -prune -exec git push --force origin main \\;",
+            "find . -prune -execdir git push --force origin main +",
+            "find . -prune -ok git push --force origin main \\;",
+        ):
+            self.assertEqual(DestructiveHookTests().decision(command), "deny", command)
+        for command in (
+            "trap 'printf %s hello' EXIT",
+            "trap 'echo \"git commit -am broken\"' EXIT",
+            "trap -p",
+            "trap - EXIT",
+            "find . -name 'git commit -am broken' -print",
+            "find . -prune -exec printf '%s' 'git commit -am broken' \\;",
+        ):
+            for hook in COMMIT_HOOKS:
+                self.assertEqual(self.run_hook(hook, command), (0, 0), command)
+            self.assertEqual(DestructiveHookTests().decision(command), "allow", command)
+
+    def test_callback32_push_requires_inert_preceding_commands(self):
+        for command in (
+            "git config remote.origin.push +HEAD:refs/heads/main; git push origin",
+            "git -C repo config remote.origin.mirror true; git push origin",
+            "python3 configure.py; git push origin feature",
+            "make configure; git push origin feature",
+        ):
+            self.assertEqual(DestructiveHookTests().decision(command), "deny", command)
+        for command in (
+            "printf '%s' 'git config remote.origin.push'; git push origin feature",
+            "git config --get remote.origin.push; git push origin feature",
+        ):
+            self.assertEqual(DestructiveHookTests().decision(command), "allow", command)
     def test_actual_inline_git_aliases_cannot_hide_guarded_operations(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

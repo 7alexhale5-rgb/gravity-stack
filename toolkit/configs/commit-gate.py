@@ -541,6 +541,96 @@ def shell_tokens(command):
                             raise ValueError("unresolved input builtin integer assignment")
                 head = False
                 continue
+            if name == "trap":
+                end = index
+                while end < len(words) and not (
+                    words[end] and all(c in ";&|()<>\n" for c in words[end])
+                ):
+                    end += 1
+                operands = [value.replace("\ue003", "") for value in words[index:end]]
+                if operands and operands[0] == "--":
+                    operands = operands[1:]
+                if operands and operands[0] not in {"-p", "-l", "-", ""}:
+                    if any("\ue002" in value for value in operands) or possible_guarded(
+                        operands[0], depth + 1, supplied_program=True
+                    ):
+                        raise ValueError(
+                            "trap callback requires a separate literal invocation"
+                        )
+                index = end
+                head = False
+                continue
+            if name == "find":
+                position = index
+                valued = {
+                    "-name",
+                    "-iname",
+                    "-path",
+                    "-ipath",
+                    "-wholename",
+                    "-iwholename",
+                    "-regex",
+                    "-iregex",
+                    "-type",
+                    "-xtype",
+                    "-user",
+                    "-uid",
+                    "-group",
+                    "-gid",
+                    "-perm",
+                    "-size",
+                    "-links",
+                    "-inum",
+                    "-samefile",
+                    "-newer",
+                    "-anewer",
+                    "-cnewer",
+                    "-newermt",
+                    "-maxdepth",
+                    "-mindepth",
+                    "-mtime",
+                    "-ctime",
+                    "-atime",
+                    "-mmin",
+                    "-cmin",
+                    "-amin",
+                    "-fstype",
+                    "-printf",
+                    "-fprint",
+                    "-fprint0",
+                    "-fls",
+                }
+                while position < len(words):
+                    option = words[position].replace("\ue003", "")
+                    if option in {";", "&", "&&", "|", "||", "\n"}:
+                        break
+                    position += 1
+                    if option in valued:
+                        position += 1
+                    elif option == "-fprintf":
+                        position += 2
+                    elif option in {"-exec", "-execdir", "-ok", "-okdir"}:
+                        child = position
+                        while position < len(words) and words[position].replace(
+                            "\ue003", ""
+                        ) not in {";", "+"}:
+                            position += 1
+                        if position == len(words) or child == position:
+                            raise ValueError("unresolved find execution action")
+                        argv = [
+                            value.replace("\ue003", "")
+                            for value in words[child:position]
+                        ]
+                        if any("\ue002" in value for value in argv) or possible_guarded(
+                            shlex.join(argv), depth + 1, supplied_program=True
+                        ):
+                            raise ValueError(
+                                "find callback requires a separate literal invocation"
+                            )
+                        position += 1
+                index = position
+                head = False
+                continue
             if name == "let":
                 for operand in words[index:]:
                     if operand and all(c in ";&|()<>\n" for c in operand):

@@ -33,6 +33,8 @@ try:
     selected = Path(os.environ.get('CLAUDE_CONFIG_DIR') or str(Path.home() / '.claude'))
     root = selected.resolve()
     settings = json.loads((root / 'settings.json').read_text())
+    if settings.get('disableAllHooks', False) is not False:
+        raise SystemExit(1)
     gate = root / 'hooks/commit-gate.py'
     def matches_bash(matcher):
         # Claude uses exact alternatives or JavaScript RegExp.test, not Python regex.
@@ -87,14 +89,39 @@ try:
         # The gate accepts no script arguments or shell composition. Suffixes can
         # mask its blocking exit status or run it in the background.
         return position == len(args) - 1 and args[position] in supported
+    def invokes_handler(hook):
+        # Current Claude handlers can filter calls or use an argv rather than a shell.
+        # Only an unconditional, synchronous POSIX command is credited here.
+        if 'if' in hook:
+            return False
+        if 'args' not in hook:
+            return hook.get('shell', 'bash') == 'bash' and invokes_gate(hook.get('command', ''))
+        args = hook['args']
+        interpreter = hook.get('command', '')
+        if not isinstance(args, list) or not all(isinstance(value, str) for value in args):
+            return False
+        if not re.fullmatch(r'python(?:3(?:\.\d+)?)?', Path(interpreter).name) or ('/' in interpreter and not Path(interpreter).is_absolute()):
+            return False
+        executable = shutil.which(interpreter)
+        if executable is None or not Path(executable).is_file() or not os.access(executable, os.X_OK):
+            return False
+        position = 0
+        while position < len(args) and args[position] in ('-u', '-B', '-I', '-E', '-s', '-S', '-O', '-OO'):
+            position += 1
+        if position < len(args) and args[position] == '--':
+            position += 1
+        return (position == len(args) - 1 and Path(args[position]).is_absolute()
+                and Path(args[position]).resolve() == gate.resolve())
     registered = False
     for group in settings.get('hooks', {}).get('PreToolUse', []):
         if not matches_bash(group.get('matcher', '')):
             continue
         for hook in group.get('hooks', []):
             timeout = hook.get('timeout')
-            if (hook.get('type') == 'command' and invokes_gate(hook.get('command', ''))
-                    and type(timeout) in (int, float) and timeout >= 70):
+            if (hook.get('type') == 'command' and invokes_handler(hook)
+                    and type(timeout) in (int, float) and timeout >= 70
+                    and hook.get('async', False) is False
+                    and hook.get('asyncRewake', False) is False):
                 registered = True
     raise SystemExit(0 if gate.is_file() and registered else 1)
 except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
