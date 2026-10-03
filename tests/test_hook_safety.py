@@ -495,6 +495,140 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_coproc_and_control_prefixes_cannot_hide_guarded_work(self):
+        destructive = DestructiveHookTests()
+        for template in (
+            "coproc {git}",
+            "coproc WORK {{ {git}; }}",
+            "coproc {{ {git}; }}",
+            "time -p coproc {{ {git}; }}",
+            "for item in one; do {git}; done",
+            "select item in one; do {git}; done",
+            "case x in x) {git};; esac",
+        ):
+            for hook in COMMIT_HOOKS:
+                with self.subTest(template=template, hook=hook):
+                    self.assertEqual(
+                        self.run_hook(
+                            hook, template.format(git="git commit -am broken")
+                        ),
+                        (2, 0),
+                    )
+            with self.subTest(template=template, guard="push"):
+                self.assertEqual(
+                    destructive.decision(
+                        template.format(git="git push --force origin main")
+                    ),
+                    "deny",
+                )
+        for command in (
+            "coproc echo healthy",
+            "coproc WORK { echo healthy; }",
+            "for item in one; do echo healthy; done",
+            "case x in x) echo healthy;; esac",
+        ):
+            self.assertEqual(destructive.decision(command), "allow")
+            for hook in COMMIT_HOOKS:
+                self.assertEqual(self.run_hook(hook, command), (0, 0))
+
+    def test_non_shell_whitespace_cannot_create_comments_or_split_lines(self):
+        destructive = DestructiveHookTests()
+        for character in ("\r", "\v", "\f", "\x85", "\u2028", "\u2029"):
+            for hook in COMMIT_HOOKS:
+                with self.subTest(character=repr(character), hook=hook):
+                    self.assertEqual(
+                        self.run_hook(
+                            hook, "echo x" + character + "#; git commit -am broken"
+                        ),
+                        (0, 1),
+                    )
+            self.assertEqual(
+                destructive.decision(
+                    "echo x" + character + "#; git push --force origin main"
+                ),
+                "deny",
+            )
+
+    def test_literal_bracket_conditions_allow_data_and_guard_substitutions(self):
+        destructive = DestructiveHookTests()
+        for command in (
+            "[ -f package.json ] && npm test",
+            "[[ -f package.json ]] && npm test",
+            "if [[ -n healthy ]]; then npm test; fi",
+            '[ "$(date)" ] && npm test',
+            '[[ "$(date)" ]] && npm test',
+            "[ 'git commit' ] && npm test",
+        ):
+            for hook in COMMIT_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+            self.assertEqual(destructive.decision(command), "allow")
+        for template in (
+            '[ "$( {git} )" ] && npm test',
+            '[[ "$( {git} )" ]] && npm test',
+        ):
+            for hook in COMMIT_HOOKS:
+                self.assertEqual(
+                    self.run_hook(hook, template.format(git="git commit -am broken")),
+                    (2, 0),
+                )
+            self.assertEqual(
+                destructive.decision(
+                    template.format(git="git push --force origin main")
+                ),
+                "deny",
+            )
+
+    def test_actual_bash_fake_git_preserves_literal_control_characters(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake = root / "git"
+            log = root / "calls"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for character in ("\r", "\v", "\f", "\x85", "\u2028", "\u2029"):
+                log.write_text("")
+                command = "echo x" + character + "#; git push --force origin main"
+                result = subprocess.run(
+                    ["bash", "-c", command], env=env, capture_output=True, timeout=2
+                )
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(
+                    log.read_text().splitlines()[-1], "push --force origin main"
+                )
+                self.assertEqual(DestructiveHookTests().decision(command), "deny")
+            bash_major = int(
+                subprocess.check_output(
+                    ["bash", "-c", 'printf "%s" "${BASH_VERSINFO[0]}"'], text=True
+                )
+            )
+            # macOS system Bash 3 lacks coproc. Guard regressions above always
+            # run; actual async command execution needs an existing Bash 4+.
+            for command in (
+                "coproc git push --force origin main; wait",
+                "coproc WORK { git push --force origin main; }; wait",
+            ):
+                if bash_major >= 4:
+                    log.write_text("")
+                    self.assertEqual(
+                        subprocess.run(
+                            ["bash", "-c", command],
+                            env=env,
+                            capture_output=True,
+                            timeout=2,
+                        ).returncode,
+                        0,
+                    )
+                    self.assertEqual(
+                        log.read_text().splitlines(), ["push --force origin main"]
+                    )
+                self.assertEqual(DestructiveHookTests().decision(command), "deny")
+
     def test_timed_options_and_unknown_prefixes_cannot_skip_guards(self):
         destructive = DestructiveHookTests()
         for prefix in ("time -p", "time --unknown", "command time -p", "$PREFIX"):
@@ -1730,6 +1864,21 @@ class CommitGateTests(unittest.TestCase):
             tokenizers.append(namespace["shell_tokens"])
         for command in (
             "git status &&\ncd docs; git commit -m test",
+            "coproc git commit -am broken",
+            "coproc WORK { git push --force origin main; }",
+            "coproc WORK { echo healthy; }",
+            "for item in one; do git commit -am broken; done",
+            "case x in x) git push --force origin main;; esac",
+            "echo x\r#; git commit -am broken",
+            "echo x\v#; git push --force origin main",
+            "echo x\f#; git commit -am broken",
+            "echo x\x85#; git push --force origin main",
+            "echo x\u2028#; git commit -am broken",
+            "echo x\u2029#; git push --force origin main",
+            "[ -f package.json ] && npm test",
+            "[[ -f package.json ]] && npm test",
+            '[ "$(git commit -am broken)" ] && npm test',
+            '[[ "$(git push --force origin main)" ]] && npm test',
             "time -p git commit -am broken",
             "time -p git push --force origin main",
             "command time -p git commit -am broken",

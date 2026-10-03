@@ -63,7 +63,7 @@ def shell_continuations(command):
             comment = True
         else:
             output.append(char)
-            word_start = char in " \t\r\n;&|()<>"
+            word_start = char in " \t\n;&|()<>"
         position += 1
     return "".join(output)
 
@@ -74,6 +74,13 @@ def git_executable(word):
 
 def shell_tokens(command):
     """Keep literal punctuation distinct from shell operators after decoding."""
+
+    def literal_test_bracket(text, position):
+        """Recognize standalone Bash test syntax, retaining glob uncertainty."""
+        start = position - 1 if position and text[position - 1] == "[" else position
+        end = start + (2 if text.startswith("[[", start) else 1)
+        boundary = " \t\n;&|()<>"
+        return (not start or text[start - 1] in boundary) and (end == len(text) or text[end] in boundary)
 
     def inspect_substitutions(text, depth=0, quote_sensitive=True):
         """Recursively inspect executable substitutions, retaining word expansion."""
@@ -142,10 +149,11 @@ def shell_tokens(command):
                 or (
                     not quote
                     and char in "*?[{~"
+                    and not (char == "[" and literal_test_bracket(text, position))
                     and not (
                         char == "{"
                         and position + 1 < len(text)
-                        and text[position + 1] in " \t\r\n;"
+                        and text[position + 1] in " \t\n;"
                     )
                 )
             ):
@@ -160,7 +168,7 @@ def shell_tokens(command):
         if hidden:
             return True
         lexer = shlex.shlex(prepared, posix=True, punctuation_chars=";&|()<>\n")
-        lexer.whitespace = " \t\r"
+        lexer.whitespace = " \t"
         lexer.whitespace_split = True
         lexer.commenters = ""
         words = list(lexer)
@@ -229,12 +237,24 @@ def shell_tokens(command):
                 "fi",
                 "while",
                 "until",
+                "for",
+                "select",
+                "case",
+                "esac",
+                "in",
                 "do",
                 "done",
                 "!",
                 "{",
                 "}",
             }:
+                continue
+            if name == "coproc":
+                # Async contexts need inspection before the no-Git fast path.
+                # Bash permits a name before a compound body; the name is data.
+                if index + 1 < len(words) and words[index + 1].replace("\ue003", "") in ("{", "("):
+                    index += 1
+                head = True
                 continue
             if name in {"env", "exec", "command", "builtin", "time"}:
                 wrapper = name
@@ -400,6 +420,7 @@ def shell_tokens(command):
                     "esac",
                     "select",
                     "function",
+                    "coproc",
                     "{",
                     "}",
                 }:
@@ -450,7 +471,8 @@ def shell_tokens(command):
 
     # Heredoc bodies are data unless fed to a shell or containing executable
     # substitutions in an unquoted heredoc. Unsupported delimiter syntax refuses.
-    lines = command.splitlines(keepends=True)
+    parts = command.split("\n")
+    lines = [value + "\n" for value in parts[:-1]] + [parts[-1]]
     code = []
     line_index = 0
     quote_state = ""
@@ -492,7 +514,7 @@ def shell_tokens(command):
             elif char == "`" or header.startswith("$(", position):
                 header_substitution = True
             elif char == "#" and (
-                position == 0 or header[position - 1] in " \t\r\n;&|()<>"
+                position == 0 or header[position - 1] in " \t\n;&|()<>"
             ):
                 break
             elif header.startswith("<<<", position):
@@ -500,7 +522,7 @@ def shell_tokens(command):
                 continue
             elif header.startswith("<<", position):
                 match = re.match(
-                    r"<<(-?)\s*([\x27][^\x27]*[\x27]|[\x22][^\x22]*[\x22]|[A-Za-z0-9_]+)(?=\s|[;&|<>]|$)",
+                    r"<<(-?)[ \t]*([\x27][^\x27]*[\x27]|[\x22][^\x22]*[\x22]|[A-Za-z0-9_]+)(?=[ \t\n]|[;&|<>]|$)",
                     header[position:],
                 )
                 if match is None:
@@ -525,10 +547,10 @@ def shell_tokens(command):
                 )
             if quote_state:
                 raise ValueError("multiline quoted heredoc header cannot be inspected")
-            lexer = shlex.shlex(header, posix=True, punctuation_chars=";&|<>\n")
-            lexer.whitespace = " \t\r"
+            lexer = shlex.shlex(shell_continuations(header), posix=True, punctuation_chars=";&|<>\n")
+            lexer.whitespace = " \t"
             lexer.whitespace_split = True
-            lexer.commenters = "#"
+            lexer.commenters = ""
             if possible_guarded(header) and any(
                 head in shells for head in executable_heads(list(lexer))
             ):
@@ -540,9 +562,8 @@ def shell_tokens(command):
                 body = lines[line_index]
                 line_index += 1
                 code.append("\n")
-                if (body.lstrip("\t") if strip_tabs else body).rstrip(
-                    "\r\n"
-                ) == delimiter:
+                literal_body = body[:-1] if body.endswith("\n") else body
+                if (literal_body.lstrip("\t") if strip_tabs else literal_body) == delimiter:
                     break
                 if (
                     not quoted
@@ -558,10 +579,10 @@ def shell_tokens(command):
     if not possible_guarded(command):
         return []
     if had_documents:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>\n")
-        lexer.whitespace = " \t\r"
+        lexer = shlex.shlex(shell_continuations(command), posix=True, punctuation_chars=";&|<>\n")
+        lexer.whitespace = " \t"
         lexer.whitespace_split = True
-        lexer.commenters = "#"
+        lexer.commenters = ""
         if any(head in shells for head in executable_heads(list(lexer))):
             raise ValueError(
                 "heredoc combined with executable shell cannot be inspected"
@@ -611,13 +632,13 @@ def shell_tokens(command):
         ):
             substitution = True
             marked.append(expansion_marker)
-        elif char in "$*?[{~":
+        elif char in "$*?[{~" and not (char == "[" and literal_test_bracket(normalized, position)):
             marked.append(expansion_marker)
         marked.append(char)
     if substitution:
         raise ValueError("executable shell substitution cannot be inspected")
     lexer = shlex.shlex("".join(marked), posix=True, punctuation_chars=";&|()<>\n")
-    lexer.whitespace = " \t\r"
+    lexer.whitespace = " \t"
     lexer.whitespace_split = True
     lexer.commenters = ""
     tokens = [
