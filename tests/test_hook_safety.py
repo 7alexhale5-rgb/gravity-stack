@@ -21,6 +21,27 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_builtin_shell_programs_refuse_but_wrapped_print_data_is_safe(self):
+        for command in (
+            "builtin eval 'git push --force origin main'",
+            "command builtin eval 'git push --force origin main'",
+            "builtin command -p eval 'git push --force origin main'",
+            "builtin source hidden-push.sh",
+            "command builtin . hidden-push.sh",
+            "builtin eval '$PROGRAM'",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+        for command in (
+            "builtin printf '%s' 'git push --force origin main'",
+            "command printf '%s' 'git push --force origin main'",
+            "command -p printf '%s' 'git push --force origin main'",
+            "builtin command printf '%s' 'git push --force origin main'",
+            "command rg 'git push' docs/",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "allow")
+
     def test_arithmetic_shifts_are_data_but_command_substitutions_are_guarded(self):
         for command in (
             "echo $((1 << 2))",
@@ -351,6 +372,77 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_builtin_shell_programs_refuse_but_wrapped_print_data_is_safe(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "builtin eval 'git commit -m x'",
+                "command builtin eval 'git commit -m x'",
+                "builtin command -p eval 'git commit -m x'",
+                "builtin source hidden-commit.sh",
+                "command builtin . hidden-commit.sh",
+                "builtin eval '$PROGRAM'",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (2, 0))
+            for command in (
+                "builtin printf '%s' 'git commit -m x'",
+                "command printf '%s' 'git commit -m x'",
+                "command -p printf '%s' 'git commit -m x'",
+                "builtin command printf '%s' 'git commit -m x'",
+                "command rg 'git commit' docs/",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+
+    def test_environment_mutating_builtins_cannot_compile_wrong_repository(self):
+        for hook in COMMIT_HOOKS:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                clean, broken = root / "clean", root / "broken"
+                for repo in (clean, broken):
+                    repo.mkdir()
+                    (repo / ".git").mkdir()
+                    (repo / "tsconfig.json").write_text("{}")
+                for mutation in (
+                    "declare -x",
+                    "typeset -x",
+                    "export",
+                    "readonly",
+                    "builtin declare -x",
+                    "command builtin typeset -x",
+                    "builtin command -p readonly",
+                    "set -a;",
+                    "builtin set -a;",
+                ):
+                    with self.subTest(hook=hook, mutation=mutation):
+                        command = f"{mutation} GIT_DIR={broken}/.git GIT_WORK_TREE={broken}; git commit -m x"
+                        payload = {
+                            "cwd": str(clean),
+                            "tool_input": {"command": command},
+                        }
+
+                        def compile_types(*args, **kwargs):
+                            return subprocess.CompletedProcess(
+                                [],
+                                0 if Path(kwargs["cwd"]) == clean else 1,
+                                "fixture",
+                                "",
+                            )
+
+                        with (
+                            mock.patch.object(
+                                sys, "stdin", io.StringIO(json.dumps(payload))
+                            ),
+                            mock.patch(
+                                "subprocess.run", side_effect=compile_types
+                            ) as compiler,
+                            mock.patch.object(sys, "stderr", io.StringIO()),
+                        ):
+                            with self.assertRaises(SystemExit) as exit:
+                                runpy.run_path(str(hook), run_name="__main__")
+                        self.assertEqual(exit.exception.code, 2)
+                        compiler.assert_not_called()
+
     def test_unresolved_git_subcommands_and_executables_refuse(self):
         for hook in COMMIT_HOOKS:
             for command in (
@@ -777,6 +869,13 @@ class CommitGateTests(unittest.TestCase):
             tokenizers.append(namespace["shell_tokens"])
         for command in (
             "git status &&\ncd docs; git commit -m test",
+            "builtin eval 'git push --force origin main'",
+            "command builtin eval 'git commit -m x'",
+            "builtin command -p eval 'git commit -m x'",
+            "builtin source script.sh",
+            "command builtin . script.sh",
+            "builtin printf '%s' 'git commit -m x'",
+            "command -p printf '%s' 'git push --force origin main'",
             "echo $((1 << 2))",
             "echo $((8 >> 1))",
             "echo $((1 << (2 + 1)))",

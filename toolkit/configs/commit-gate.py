@@ -65,12 +65,12 @@ def shell_tokens(command):
         ".",
         "env",
         "exec",
-        "command",
     }
 
     def executable_heads(words):
         heads = []
         at_head = True
+        wrapped = False
         for token in words:
             word, operator = (
                 token
@@ -79,12 +79,16 @@ def shell_tokens(command):
             )
             if operator:
                 at_head = True
+                wrapped = False
             elif at_head:
-                if word in {"env", "exec", "command"} or re.match(
+                if word in {"env", "exec", "command", "builtin"} or re.match(
                     r"^[A-Za-z_][A-Za-z0-9_]*=", word
                 ):
-                    if word in {"env", "exec", "command"}:
+                    if word in {"env", "exec"}:
                         heads.append(word)
+                    wrapped |= word in {"env", "exec", "command", "builtin"}
+                    continue
+                if wrapped and word.startswith("-"):
                     continue
                 heads.append(word if word == "." else Path(word).name)
                 at_head = False
@@ -265,7 +269,10 @@ def shell_tokens(command):
     group = []
     for word, operator in tokens + [(";", True)]:
         if operator and any(char in word for char in ";&\n"):
-            if any(head in shells for head in executable_heads(group)) and any(
+            heads = executable_heads(group)
+            if any(head in {"eval", "source", "."} for head in heads):
+                raise ValueError("opaque eval or source program cannot be inspected")
+            if any(head in shells for head in heads) and any(
                 re.search(
                     r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\b(?:push|commit)\b", value
                 )
@@ -351,6 +358,29 @@ def commit_directories(command, base):
         ):
             assignment_count += 1
         assigned_args = args[assignment_count:]
+        effective_args = assigned_args
+        while effective_args and effective_args[0] in ("builtin", "command"):
+            effective_args = effective_args[1:]
+            while effective_args and effective_args[0].startswith("-"):
+                effective_args = effective_args[1:]
+        if effective_args and effective_args[0] in (
+            "declare",
+            "typeset",
+            "export",
+            "readonly",
+            "local",
+            "unset",
+            "read",
+            "mapfile",
+            "readarray",
+            "set",
+            "setopt",
+            "unsetopt",
+            "eval",
+            "source",
+            ".",
+        ):
+            uncertain_cwd = True
         if assignment_count and assigned_args:
             if assigned_args[0] in ("cd", "pushd", "popd") or (
                 assigned_args[0] in ("builtin", "command")
