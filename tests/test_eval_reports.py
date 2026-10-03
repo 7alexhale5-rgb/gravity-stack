@@ -34,6 +34,7 @@ Path(sys.argv[sys.argv.index("--output")+1]).write_text(json.dumps({
     "results": {"stats": {"successes": 0, "failures": 1, "errors": 0},
                 "cases": [{"reason": "fixture assertion failed"}]}}))
 print("fixture complete diagnostic")
+sys.exit(int(os.environ.get("FIXTURE_EXIT", "0")))
 """)
         stub.chmod(0o755)
         self.env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"])
@@ -90,6 +91,14 @@ print("fixture complete diagnostic")
         self.assertEqual(
             (previous / "planning-stack.json").read_bytes(), previous_report
         )
+
+    def test_valid_failed_cases_are_not_runner_errors(self):
+        self.env["FIXTURE_EXIT"] = "100"
+        result = self.run_batch()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("2 failed, 0 errors", result.stdout)
+        self.assertIn("0 runner errors", result.stdout)
+        self.assertTrue((self.latest() / "planning-stack.json").is_file())
 
 
 if __name__ == "__main__":

@@ -230,6 +230,7 @@ chmod +x "$dest/install.sh"
                                     {
                                         "type": "command",
                                         "command": "python3 $HOME/.claude/hooks/commit-gate.py",
+                                        "timeout": 70,
                                     }
                                 ],
                             }
@@ -309,7 +310,13 @@ chmod +x "$dest/install.sh"
                             "PreToolUse": [
                                 {
                                     "matcher": matcher,
-                                    "hooks": [{"type": "command", "command": command}],
+                                    "hooks": [
+                                        {
+                                            "type": "command",
+                                            "command": command,
+                                            "timeout": 70,
+                                        }
+                                    ],
                                 }
                             ]
                         }
@@ -321,6 +328,29 @@ chmod +x "$dest/install.sh"
                     result.returncode, expected, result.stdout + result.stderr
                 )
                 self.assertEqual(store.read_text(), original)
+
+    def test_commit_gate_timeout_exceeds_compiler_timeout(self):
+        self.real_verifier()
+        store = self.home / ".claude/settings.json"
+        value = json.loads(store.read_text())
+        hook = value["hooks"]["PreToolUse"][0]["hooks"][0]
+        for timeout, expected in (
+            (None, 1),
+            (0, 1),
+            (60, 1),
+            ("70", 1),
+            (True, 1),
+            (70, 0),
+        ):
+            with self.subTest(timeout=timeout):
+                hook.pop("timeout", None)
+                if timeout is not None:
+                    hook["timeout"] = timeout
+                store.write_text(json.dumps(value))
+                result = self.run_installer("--skip-dev-protocol")
+                self.assertEqual(
+                    result.returncode, expected, result.stdout + result.stderr
+                )
 
     def test_real_verifier_counts_all_failures(self):
         self.real_verifier()

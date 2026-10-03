@@ -107,14 +107,25 @@ try:
 except ValueError:
     deny("shell command cannot be inspected")
 
+if any(not operator and not git_executable(word)
+       and re.search(r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\bpush\b", shell_continuations(word))
+       for word, operator in tokens):
+    deny("quoted or compound Git push cannot be inspected; use a literal Git command")
+
 for index, (word, operator) in enumerate(tokens):
     if operator or not git_executable(word):
         continue
     args = []
+    redirection = False
     for part, operator in tokens[index + 1:]:
         if operator:
+            if "<" in part or ">" in part:
+                redirection = True
+                continue
             break
         args.append(part)
+    if redirection and "push" in args:
+        deny("Git push with redirection cannot be fully inspected; use a literal push")
     pos = 0
     inline_config = False
     while pos < len(args):
@@ -140,6 +151,7 @@ for index, (word, operator) in enumerate(tokens):
     remote_option = False
     lease = False
     all_refs = False
+    delete_refs = False
     position = 0
     while position < len(push_args):
         arg = push_args[position]
@@ -160,6 +172,7 @@ for index, (word, operator) in enumerate(tokens):
             lease = True
         elif arg in ("--all", "--tags", "--follow-tags", "--prune", "--delete", "-d"):
             all_refs = True
+            delete_refs |= arg in ("--delete", "-d")
         elif arg in (
             "-u", "--set-upstream", "-n", "--dry-run",
             "-v", "--verbose", "-q", "--quiet", "--atomic", "--signed",
@@ -173,6 +186,12 @@ for index, (word, operator) in enumerate(tokens):
         position += 1
     if any(ref.startswith("+") for ref in positionals):
         deny("implicit force push")
+    deletion_candidates = positionals if remote_option else positionals[1:]
+    for ref in deletion_candidates:
+        if delete_refs or ref.startswith(":"):
+            destination = ref.split(":")[-1].removeprefix("refs/heads/")
+            if destination in ("main", "master", "HEAD"):
+                deny("deletion of a protected branch")
     if not lease:
         continue
     if remote_option or all_refs:

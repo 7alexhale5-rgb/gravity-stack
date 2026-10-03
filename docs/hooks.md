@@ -58,8 +58,9 @@ the registration check.
 | CARL rule injection | UserPromptSubmit           | Manual                 | Required rule files and dependencies exist; actual context is observed |
 
 The starter backup command expects `~/.claude/current-session.jsonl`; that file is
-not guaranteed to exist. Select the bundled stdin-aware backup hook if its dependencies
-fit your environment. A directory alone does not prove a working backup.
+not guaranteed to exist. The bundled backup hook also expects that fixed file and
+does not read the hook's stdin transcript path. Verify an actual saved transcript
+before relying on either backup. A directory alone does not prove a working backup.
 
 ## Test before using
 

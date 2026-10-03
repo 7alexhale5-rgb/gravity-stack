@@ -50,7 +50,7 @@ print(*counts)
 PY
   ) || { echo "  FAIL invalid, missing or empty evaluation result"; run_error=$((run_error+1)); continue; }
   read -r passed failed errors <<< "$counts"
-  if [[ $cli_status -ne 0 ]]; then
+  if [[ $cli_status -ne 0 && $failed -eq 0 && $errors -eq 0 ]]; then
     echo "  FAIL evaluation CLI exited $cli_status"
     run_error=$((run_error+1))
   fi

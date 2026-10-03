@@ -4,6 +4,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -86,28 +87,41 @@ def shell_tokens(command):
 def commit_directories(command, base):
     """Resolve literal cd/Git options; never execute the submitted shell command."""
     tokens = shell_tokens(command)
+    if any(
+        not operator
+        and not git_executable(word)
+        and re.search(r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\bcommit\b", shell_continuations(word))
+        for word, operator in tokens
+    ):
+        raise ValueError(
+            "quoted or compound Git commit cannot be inspected; use literal Git"
+        )
     if not any(git_executable(word) for word, operator in tokens if not operator):
         return []
     segments = []
     segment = []
     unsupported = False
+    conditional = False
     for word, operator in tokens:
         if operator:
             unsupported |= word.strip("\n") not in ("", ";", "&&")
-            segments.append(segment)
+            segments.append((segment, conditional))
             segment = []
+            separator = word.strip("\n")
+            conditional = separator in ("&&", "||") or (conditional and not separator)
         else:
             segment.append(word)
-    segments.append(segment)
+    segments.append((segment, conditional))
     targets = []
     directory = base
     uncertain_cwd = False
-    for args in segments:
+    for args, conditional in segments:
         if not args:
             continue
         if args[0] == "cd":
             if (
-                len(args) != 2
+                conditional
+                or len(args) != 2
                 or args[1].startswith("-")
                 or any(c in args[1] for c in "$`~")
             ):

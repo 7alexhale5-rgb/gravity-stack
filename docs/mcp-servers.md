@@ -72,7 +72,7 @@ AI-powered web search for real-time information retrieval.
   "mcpServers": {
     "perplexity": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-perplexity"],
+      "args": ["-y", "@perplexity-ai/mcp-server@0.8.2"],
       "env": {
         "PERPLEXITY_API_KEY": "pplx-your-key-here"
       }
@@ -98,9 +98,9 @@ Knowledge graph memory server for persistent entity and relationship storage.
   "mcpServers": {
     "memory": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-memory"],
+      "args": ["-y", "@modelcontextprotocol/server-memory@2026.1.26"],
       "env": {
-        "MEMORY_FILE": "~/.claude/memory/knowledge-graph.json"
+        "MEMORY_FILE_PATH": "~/.claude/memory/knowledge-graph.json"
       }
     }
   }
@@ -126,7 +126,7 @@ Access Hacker News stories, comments, and search.
   "mcpServers": {
     "hackernews": {
       "command": "npx",
-      "args": ["-y", "mcp-hackernews"]
+      "args": ["-y", "hn-mcp@1.0.0"]
     }
   }
 }
@@ -323,21 +323,21 @@ Here is a complete `mcpServers` block with all 10 servers:
     },
     "perplexity": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-perplexity"],
+      "args": ["-y", "@perplexity-ai/mcp-server@0.8.2"],
       "env": {
         "PERPLEXITY_API_KEY": "pplx-xxx"
       }
     },
     "memory": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-memory"],
+      "args": ["-y", "@modelcontextprotocol/server-memory@2026.1.26"],
       "env": {
-        "MEMORY_FILE": "~/.claude/memory/knowledge-graph.json"
+        "MEMORY_FILE_PATH": "~/.claude/memory/knowledge-graph.json"
       }
     },
     "hackernews": {
       "command": "npx",
-      "args": ["-y", "mcp-hackernews"]
+      "args": ["-y", "hn-mcp@1.0.0"]
     },
     "obsidian": {
       "type": "sse",

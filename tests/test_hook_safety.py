@@ -21,6 +21,48 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_quoted_shell_wrappers_cannot_hide_git_push(self):
+        for command in (
+            "bash -c 'git push --force origin main'",
+            "bash -lc 'git --no-pager push --force origin main'",
+            "eval 'git push --force origin main'",
+            "printf '%s' 'git push --force origin main' | bash",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+
+    def test_ansi_quoted_push_wrapper_is_not_a_literal_git_command(self):
+        self.assertEqual(
+            self.decision("bash -c $'git push --force origin main'"), "deny"
+        )
+
+    def test_protected_branch_deletion_is_denied(self):
+        for command in (
+            "git push origin --delete main",
+            "git push origin -d master",
+            "git push origin :main",
+            "git push origin :refs/heads/master",
+            "git push origin --delete refs/heads/main",
+            "git push origin --delete HEAD",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+        self.assertEqual(self.decision("git push origin --delete feature"), "allow")
+
+    def test_redirections_cannot_hide_force_flags_or_protected_refspecs(self):
+        for command in (
+            "git push origin main >push.log --force",
+            "git push origin main 2>push.log -f",
+            "git push origin main >>push.log --force",
+            "git push origin main >&2 --force",
+            "git >push.log push origin main --force",
+            "git push --force-with-lease origin feature:refs/heads/feature >push.log feature:refs/heads/main",
+            "git push origin feature >push.log +HEAD:refs/heads/main",
+            "git push origin main <input.txt --force",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+
     def test_inline_git_configuration_cannot_hide_push_effects(self):
         for option in (
             "-c remote.origin.mirror=true",
@@ -199,6 +241,64 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_quoted_shell_wrappers_cannot_hide_compilation_gate(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "bash -c 'git commit -m x'",
+                "bash -lc 'git -C . commit -m x'",
+                "eval 'git commit -m x'",
+                "printf '%s' 'git commit -m x' | bash",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (2, 0))
+
+    def test_ansi_quoted_commit_wrapper_is_not_a_literal_git_command(self):
+        for hook in COMMIT_HOOKS:
+            self.assertEqual(self.run_hook(hook, "bash -c $'git commit -m x'"), (2, 0))
+
+    def test_conditionally_skipped_cd_cannot_bypass_root_compilation(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "false && cd docs; git commit -m test",
+                "false && cd docs\ngit commit -m test",
+                "false &&\ncd docs; git commit -m test",
+            ):
+                with (
+                    self.subTest(hook=hook, command=command),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    root = Path(tmp)
+                    (root / "tsconfig.json").write_text("{}")
+                    (root / "docs").mkdir()
+                    payload = {"cwd": str(root), "tool_input": {"command": command}}
+                    with (
+                        mock.patch.object(
+                            sys, "stdin", io.StringIO(json.dumps(payload))
+                        ),
+                        mock.patch(
+                            "subprocess.run",
+                            return_value=subprocess.CompletedProcess(
+                                [], 1, "failed", ""
+                            ),
+                        ) as compiler,
+                        mock.patch.object(sys, "stderr", io.StringIO()),
+                    ):
+                        with self.assertRaises(SystemExit) as exit:
+                            runpy.run_path(str(hook), run_name="__main__")
+                    self.assertEqual(
+                        exit.exception.code,
+                        2,
+                        "ambiguous skipped cd must not allow a root commit",
+                    )
+                    # A conservative refusal may avoid compilation entirely; if run,
+                    # only the original TypeScript root is a safe check target.
+                    self.assertTrue(
+                        all(
+                            call.kwargs["cwd"] == str(root.resolve())
+                            for call in compiler.call_args_list
+                        )
+                    )
+
     def test_quoted_punctuation_directory_still_runs_compilation(self):
         for hook in COMMIT_HOOKS:
             for name, token in ((";", "';'"), (";", r"\;"), ("&&", "'&&'")):
@@ -236,6 +336,50 @@ class CommitGateTests(unittest.TestCase):
 
     def test_both_shipped_copies_are_identical(self):
         self.assertEqual(COMMIT_HOOKS[0].read_bytes(), COMMIT_HOOKS[1].read_bytes())
+
+    def test_three_tokenizer_copies_have_matching_behavior(self):
+        import shlex
+
+        sources = [hook.read_text() for hook in COMMIT_HOOKS]
+        sources.append(
+            (HOOKS / "block-destructive.sh")
+            .read_text()
+            .split("python3 -c '\n", 1)[1]
+            .rsplit("'", 1)[0]
+        )
+        tokenizers = []
+        for source in sources:
+            functions = [
+                node
+                for node in ast.parse(source).body
+                if isinstance(node, ast.FunctionDef)
+                and node.name
+                in {"shell_continuations", "git_executable", "shell_tokens"}
+            ]
+            namespace = {"Path": Path, "shlex": shlex}
+            exec(
+                compile(
+                    ast.Module(body=functions, type_ignores=[]),
+                    "tokenizer-parity",
+                    "exec",
+                ),
+                namespace,
+            )
+            tokenizers.append(namespace["shell_tokens"])
+        for command in (
+            "git status &&\ncd docs; git commit -m test",
+            "git push origin main >push.log --force",
+            "git push origin main 2>&1 --force",
+            "git -C ';' status",
+            r"git -C \; status",
+            "bash -c 'git commit -m test'",
+            "git status # comment\ntrue",
+            "git \\\nstatus",
+        ):
+            with self.subTest(command=command):
+                outputs = [tokenizer(command) for tokenizer in tokenizers]
+                self.assertEqual(outputs[0], outputs[1])
+                self.assertEqual(outputs[0], outputs[2])
 
     def run_hook(self, hook, command, result=None, error=None, with_tsconfig=True):
         with tempfile.TemporaryDirectory(prefix="gravity-hook-") as directory:
