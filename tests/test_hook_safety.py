@@ -21,6 +21,17 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_wrapper_option_operands_cannot_hide_executables(self):
+        for prefix in (
+            "env -u GRAVITY_UNUSED",
+            "env --unset GRAVITY_UNUSED",
+            "exec -a diagnostic-name",
+        ):
+            self.assertEqual(
+                self.decision(prefix + " bash -c '\"git\" push --force origin main'"),
+                "deny",
+            )
+
     def test_shell_input_channels_with_quoted_git_refuse(self):
         for command in (
             "bash <<< '\"git\" push --force origin main'",
@@ -428,6 +439,18 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_wrapper_option_operands_cannot_hide_executables(self):
+        for hook in COMMIT_HOOKS:
+            for prefix in (
+                "env -u GRAVITY_UNUSED",
+                "env --unset GRAVITY_UNUSED",
+                "exec -a diagnostic-name",
+            ):
+                self.assertEqual(
+                    self.run_hook(hook, prefix + " bash -c '\"git\" commit -am x'"),
+                    (2, 0),
+                )
+
     def test_multiline_pipeline_refuses(self):
         for hook in COMMIT_HOOKS:
             for pipe in ("|", "|&"):

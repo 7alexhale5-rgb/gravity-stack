@@ -124,6 +124,8 @@ def shell_tokens(command):
         heads = []
         at_head = True
         wrapped = False
+        wrapper = ""
+        operand_pending = False
         for token in words:
             word, operator = (
                 token
@@ -131,13 +133,21 @@ def shell_tokens(command):
                 else (token, bool(token) and all(char in ";&|\n" for char in token))
             )
             if operator:
+                if operand_pending:
+                    raise ValueError("missing wrapper option operand")
                 if any(char in "<>" for char in word) and (
                     at_head or (len(heads) == 1 and heads[0].isdigit())
                 ):
                     raise ValueError("unsupported leading shell redirection")
                 at_head = True
                 wrapped = False
+                wrapper = ""
             elif at_head:
+                if operand_pending:
+                    if getattr(word, "expanded", False):
+                        raise ValueError("expanded wrapper option operand")
+                    operand_pending = False
+                    continue
                 if getattr(word, "expanded", False) and not re.match(
                     r"^[A-Za-z_][A-Za-z0-9_]*=", word
                 ):
@@ -163,6 +173,8 @@ def shell_tokens(command):
                     raise ValueError("unsupported shell control structure")
                 if word in {"!", "time"}:
                     wrapped = wrapped or word == "time"
+                    if word == "time":
+                        wrapper = "time"
                     continue
                 if word in {"env", "exec", "command", "builtin"} or re.match(
                     r"^[A-Za-z_][A-Za-z0-9_]*=", word
@@ -170,11 +182,27 @@ def shell_tokens(command):
                     if word in {"env", "exec"}:
                         heads.append(word)
                     wrapped |= word in {"env", "exec", "command", "builtin"}
+                    if word in {"env", "exec", "command", "builtin"}:
+                        wrapper = word
                     continue
                 if wrapped and word.startswith("-"):
+                    operands = {"env": {"-u", "--unset"}, "exec": {"-a"}}
+                    flags = {"env": {"-i", "--ignore-environment"}, "exec": {"-c", "-l"}, "command": {"-p", "-v", "-V"}, "builtin": set(), "time": {"-p"}}
+                    if word in operands.get(wrapper, set()):
+                        operand_pending = True
+                    elif word == "--" or word in flags.get(wrapper, set()):
+                        pass
+                    elif wrapper == "env" and (word.startswith("--unset=") or word.startswith("-u") and len(word) > 2):
+                        pass
+                    elif wrapper == "exec" and word.startswith("-a") and len(word) > 2:
+                        pass
+                    else:
+                        raise ValueError("unsupported wrapper option")
                     continue
                 heads.append(word if word == "." else Path(word).name)
                 at_head = False
+        if operand_pending:
+            raise ValueError("missing wrapper option operand")
         return heads
 
     # Heredoc bodies are data unless fed to a shell or containing executable
@@ -402,6 +430,7 @@ def shell_tokens(command):
         else:
             group.append((word, operator))
     return tokens
+
 
 
 
