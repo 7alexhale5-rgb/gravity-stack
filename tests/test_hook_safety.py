@@ -21,6 +21,16 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_negated_or_quoted_shell_programs_cannot_hide_pushes(self):
+        for command in (
+            "! bash -c 'git push --force origin main'",
+            "time bash -c '\"git\" push --force origin main'",
+            "bash -c '\"git\" push --force origin main'",
+            "command bash -lc '$PROGRAM'",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+
     def test_builtin_shell_programs_refuse_but_wrapped_print_data_is_safe(self):
         for command in (
             "builtin eval 'git push --force origin main'",
@@ -372,6 +382,17 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_negated_or_quoted_shell_programs_cannot_hide_commits(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "! bash -c 'git commit -m x'",
+                "time bash -c '\"git\" commit -m x'",
+                "bash -c '\"git\" commit -m x'",
+                "command bash -lc '$PROGRAM'",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (2, 0))
+
     def test_builtin_shell_programs_refuse_but_wrapped_print_data_is_safe(self):
         for hook in COMMIT_HOOKS:
             for command in (
@@ -869,6 +890,13 @@ class CommitGateTests(unittest.TestCase):
             tokenizers.append(namespace["shell_tokens"])
         for command in (
             "git status &&\ncd docs; git commit -m test",
+            "! bash -c 'git push --force origin main'",
+            "! bash -c 'git commit -m x'",
+            "time bash -c '\"git\" push --force origin main'",
+            "time bash -c '\"git\" commit -m x'",
+            "bash -c '\"git\" push --force origin main'",
+            "bash -c '\"git\" commit -m x'",
+            "command bash -lc '$PROGRAM'",
             "builtin eval 'git push --force origin main'",
             "command builtin eval 'git commit -m x'",
             "builtin command -p eval 'git commit -m x'",

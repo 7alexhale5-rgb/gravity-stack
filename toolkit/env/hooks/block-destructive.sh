@@ -101,6 +101,9 @@ def shell_tokens(command):
                 at_head = True
                 wrapped = False
             elif at_head:
+                if word in {"!", "time"}:
+                    wrapped = wrapped or word == "time"
+                    continue
                 if word in {"env", "exec", "command", "builtin"} or re.match(
                     r"^[A-Za-z_][A-Za-z0-9_]*=", word
                 ):
@@ -292,6 +295,16 @@ def shell_tokens(command):
             heads = executable_heads(group)
             if any(head in {"eval", "source", "."} for head in heads):
                 raise ValueError("opaque eval or source program cannot be inspected")
+            if any(
+                head in {"bash", "sh", "zsh", "dash", "ksh"} for head in heads
+            ) and any(
+                value == "--command"
+                or re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", value)
+                or getattr(value, "expanded", False)
+                for value, is_operator in group
+                if not is_operator
+            ):
+                raise ValueError("opaque shell command program cannot be inspected")
             if any(head in shells for head in heads) and any(
                 re.search(
                     r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\b(?:push|commit)\b", value
@@ -303,7 +316,6 @@ def shell_tokens(command):
         else:
             group.append((word, operator))
     return tokens
-
 
 try:
     tokens = shell_tokens(command)
