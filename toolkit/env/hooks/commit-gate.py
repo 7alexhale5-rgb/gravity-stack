@@ -126,7 +126,7 @@ def shell_tokens(command):
                     raise ValueError(
                         "guarded arithmetic substitution cannot be inspected"
                     )
-                if bare_arithmetic and not literal_arithmetic(text[beginning : ending - 1]):
+                if not literal_arithmetic(text[beginning : ending - 1]):
                     raise ValueError("unresolved arithmetic command cannot be inspected")
                 rewritten.append("\ue003true" if bare_arithmetic else "\ue002ARITHMETIC")
                 position = ending + 1
@@ -332,6 +332,10 @@ def shell_tokens(command):
                 continue
             if supplied_program and name in {"bash", "sh", "zsh", "dash", "ksh", "python", "python3", "node", "perl", "ruby", "awk", "watch"}:
                 raise ValueError("xargs supplied interpreter program cannot be inspected")
+            if supplied_program and git_executable(word):
+                # Appended stdin may supply Git options or its entire subcommand.
+                # Inspecting only the fixed argv cannot prove the resulting call.
+                raise ValueError("xargs supplied Git arguments cannot be inspected")
             if name in {"nice", "nohup", "timeout", "sudo", "setsid", "stdbuf", "chrt", "ionice", "taskset", "doas", "runuser", "xargs", "watch"}:
                 # These programs execute a child. Keep their child executable
                 # visible before the unrelated-command fast path. We refuse

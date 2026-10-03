@@ -496,6 +496,58 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_actual_xargs_git_inputs_and_indirect_arithmetic_are_guarded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            log = root / "calls"
+            fake = root / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for operation in ("commit -am broken", "push --force origin main"):
+                for command in (
+                    "printf '%s\\n' '" + operation + "' | xargs git",
+                    "xargs git <<'INPUT'\n" + operation + "\nINPUT",
+                    "expression='a[$(git "
+                    + operation
+                    + "; printf 0)]'; echo $((expression))",
+                    "first=second; second='a[$(git "
+                    + operation
+                    + "; printf 0)]'; echo $((first + 1))",
+                ):
+                    log.write_text("")
+                    subprocess.run(
+                        ["bash", "-c", command], env=env, capture_output=True, timeout=3
+                    )
+                    self.assertIn(operation, log.read_text(), command)
+                    with self.subTest(command=command):
+                        if operation.startswith("commit"):
+                            for hook in COMMIT_HOOKS:
+                                self.assertEqual(self.run_hook(hook, command), (2, 0))
+                        else:
+                            self.assertEqual(
+                                DestructiveHookTests().decision(command), "deny"
+                            )
+        for command in (
+            "echo $((1+2*3))",
+            "echo $((count=1+2))",
+            "printf '%s' 'echo $((expression))'",
+            "printf '%s' 'xargs git commit -am literal'",
+        ):
+            for hook in COMMIT_HOOKS:
+                self.assertEqual(self.run_hook(hook, command), (0, 0))
+            self.assertEqual(DestructiveHookTests().decision(command), "allow")
+
+    def test_arithmetic_command_output_is_unresolved_not_numeric_proof(self):
+        command = "echo $(( $(date +%s) + 1 ))"
+        for hook in COMMIT_HOOKS:
+            self.assertEqual(self.run_hook(hook, command), (2, 0))
+        self.assertEqual(DestructiveHookTests().decision(command), "deny")
+
     def test_xargs_supplied_shell_programs_are_not_literal_data(self):
         for git in ("git commit -am broken", "git push --force origin main"):
             for form in (
@@ -840,7 +892,6 @@ class CommitGateTests(unittest.TestCase):
                             )
             for command in (
                 "echo $((1 << 2))",
-                "echo $(( $(date +%s) + 1 ))",
                 "echo '$(( $(git commit -am literal) ))'",
             ):
                 for hook in COMMIT_HOOKS:
@@ -2282,6 +2333,10 @@ class CommitGateTests(unittest.TestCase):
             )
             tokenizers.append(namespace["shell_tokens"])
         for command in (
+            "printf '%s\\n' 'commit -am broken' | xargs git",
+            "xargs git <<'INPUT'\npush --force origin main\nINPUT",
+            "expression='a[$(git push --force origin main; printf 0)]'; echo $((expression))",
+            "echo $((count=1+2))",
             "git status &&\ncd docs; git commit -m test",
             "printf '%s\\n' 'git push --force origin main' | xargs -I CMD sh -c CMD",
             "let 'a[$(git push --force origin main; printf 0)]=1'",
