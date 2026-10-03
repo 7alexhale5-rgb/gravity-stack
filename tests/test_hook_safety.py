@@ -496,6 +496,139 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_actual_read_arithmetic_destinations_are_guarded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            log = root / "calls"
+            fake = root / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for operation in ("commit -am broken", "push --force origin main"):
+                for wrapper in ("", "builtin ", "command ", "command builtin "):
+                    for indirect in (False, True):
+                        expression = "a[$(git " + operation + "; printf 0)]"
+                        prefix = "a=(0); expression='" + expression + "'; "
+                        target = "a[expression]" if indirect else expression
+                        command = prefix + wrapper + "read '" + target + "' <<< value"
+                        log.write_text("")
+                        subprocess.run(
+                            ["bash", "-c", command],
+                            env=env,
+                            capture_output=True,
+                            timeout=3,
+                        )
+                        self.assertIn(operation, log.read_text(), command)
+                        with self.subTest(command=command):
+                            if operation.startswith("commit"):
+                                for hook in COMMIT_HOOKS:
+                                    self.assertEqual(
+                                        self.run_hook(hook, command), (2, 0)
+                                    )
+                            else:
+                                self.assertEqual(
+                                    DestructiveHookTests().decision(command), "deny"
+                                )
+
+    def test_mapfile_callbacks_are_refused_by_every_guard(self):
+        for name in ("mapfile", "readarray"):
+            for wrapper in ("", "builtin ", "command "):
+                for operation in ("commit -am broken", "push --force origin main"):
+                    for option in ("-C ", "-C", "-tC"):
+                        command = (
+                            wrapper
+                            + name
+                            + " -c 1 "
+                            + option
+                            + "'git "
+                            + operation
+                            + "; #' <<< line"
+                        )
+                        with self.subTest(command=command):
+                            if operation.startswith("commit"):
+                                for hook in COMMIT_HOOKS:
+                                    self.assertEqual(
+                                        self.run_hook(hook, command), (2, 0)
+                                    )
+                            else:
+                                self.assertEqual(
+                                    DestructiveHookTests().decision(command), "deny"
+                                )
+
+    def test_actual_bash4_mapfile_callbacks_execute_fake_git(self):
+        candidates = [
+            os.environ.get("GRAVITY_TEST_BASH4"),
+            shutil.which("bash"),
+            "/opt/homebrew/bin/bash",
+            "/usr/local/bin/bash",
+        ]
+        bash4 = None
+        for candidate in candidates:
+            if candidate and Path(candidate).is_file():
+                version = subprocess.run(
+                    [candidate, "--version"], capture_output=True, text=True, timeout=3
+                ).stdout
+                if any(
+                    "version " + str(major) + "." in version for major in range(4, 10)
+                ):
+                    bash4 = candidate
+                    break
+        if not bash4:
+            self.skipTest(
+                "Bash >=4 unavailable: callback parser checks run; actual mapfile/readarray execution remains a runtime gap"
+            )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            log = root / "calls"
+            fake = root / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for name in ("mapfile", "readarray"):
+                for wrapper in ("", "builtin ", "command "):
+                    for operation in ("commit -am broken", "push --force origin main"):
+                        for option in ("-C ", "-C", "-tC"):
+                            command = (
+                                wrapper
+                                + name
+                                + " -c 1 "
+                                + option
+                                + "'git "
+                                + operation
+                                + "; #' <<< line"
+                            )
+                            log.write_text("")
+                            subprocess.run(
+                                [bash4, "-c", command],
+                                env=env,
+                                capture_output=True,
+                                timeout=3,
+                            )
+                            self.assertIn(operation, log.read_text(), command)
+
+    def test_literal_input_destinations_without_callbacks_remain_allowed(self):
+        for command in (
+            "a=(0); read 'a[0]' <<< value",
+            "read -r label <<< value",
+            "read -p 'a[expression]' label <<< value",
+            "read -rp '$(git commit -am printed)' label <<< value",
+            "mapfile -t rows <<< value",
+            "builtin readarray -t rows <<< value",
+            "printf '%s' 'mapfile -C callback'",
+            "printf '%s' 'read a[expression]'",
+        ):
+            for hook in COMMIT_HOOKS:
+                self.assertEqual(self.run_hook(hook, command), (0, 0), command)
+            self.assertEqual(DestructiveHookTests().decision(command), "allow", command)
+
     def test_actual_heredoc_indirect_expansions_and_integer_writers(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -2632,6 +2765,11 @@ class CommitGateTests(unittest.TestCase):
             "declare -i number; command builtin printf -v number '%s' expression",
             "declare -i number; builtin printf -vnumber '%s' 123",
             "declare -i number; read number <<< expression",
+            "read 'a[expression]' <<< value",
+            "builtin read -r 'a[0]' <<< value",
+            "mapfile -c 1 -C callback <<< line",
+            "command readarray -tCcallback <<< line",
+            "read -p 'a[expression]' label <<< value",
             'echo "$(date)"',
             "if test -f package.json; then npm test; fi",
             'echo "$(printf "$(git commit -am x)")"',

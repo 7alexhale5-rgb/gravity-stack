@@ -2,6 +2,7 @@
 # Register servers through Claude's supported config store, without overwriting existing entries.
 set -euo pipefail
 command -v claude >/dev/null || { echo "Claude CLI required for MCP registration" >&2; exit 1; }
+CONFIG_ROOT="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}")"
 registered() {
   # Inspect the supported user store without starting servers or printing config.
   python3 - "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" "$1" <<'PY'
@@ -16,6 +17,10 @@ try:
     entry=servers.get(sys.argv[2])
     if entry is None: sys.exit(1)
     if not isinstance(entry,dict): sys.exit(2)
+    if sys.argv[2] == 'memory' and isinstance(entry.get('env'), dict):
+        memory_path = entry['env'].get('MEMORY_FILE_PATH')
+        if memory_path is not None and (not isinstance(memory_path, str) or not Path(memory_path).is_absolute()):
+            sys.exit(2)
     sys.exit(0 if any(isinstance(entry.get(k),str) and entry[k] for k in ('command','url')) else 2)
 except (OSError,ValueError,AttributeError): sys.exit(2)
 PY
@@ -38,7 +43,7 @@ register() {
 register playwright --transport stdio -- npx -y @playwright/mcp@0.0.68
 register firecrawl --transport stdio -- npx -y firecrawl-mcp@3.9.0
 register perplexity --transport stdio -- npx -y @perplexity-ai/mcp-server@0.8.2
-register memory --transport stdio --env "MEMORY_FILE_PATH=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/memory/graph.json" -- npx -y @modelcontextprotocol/server-memory@2026.1.26
+register memory --transport stdio --env "MEMORY_FILE_PATH=$CONFIG_ROOT/memory/graph.json" -- npx -y @modelcontextprotocol/server-memory@2026.1.26
 register hacker-news --transport stdio -- npx -y hn-mcp@1.0.0
 # Public documentation only, opt-in; no OpenAI API key needed.
 if [[ "${GRAVITY_INSTALL_OPENAI_DOCS:-0}" == 1 ]]; then

@@ -502,9 +502,46 @@ def shell_tokens(command):
                     ):
                         raise ValueError("unresolved printf integer assignment")
                 elif name != "printf":
-                    targets = operands or (["REPLY"] if name == "read" else ["MAPFILE"])
-                    if any(target in integer_names for target in targets):
-                        raise ValueError("unresolved input builtin integer assignment")
+                    # Parse builtin option operands before treating remaining
+                    # words as destinations. Prompt/delimiter text stays data;
+                    # callback options are execution and are always refused.
+                    targets = []
+                    position = 0
+                    value_options = "adinNptu" if name == "read" else "nOsucCd"
+                    while position < len(operands):
+                        option = operands[position]
+                        position += 1
+                        if option == "--":
+                            targets.extend(operands[position:])
+                            break
+                        if not option.startswith("-") or option == "-":
+                            targets.extend(operands[position - 1:])
+                            break
+                        for offset, flag in enumerate(option[1:], 1):
+                            if name != "read" and flag == "C":
+                                raise ValueError("input builtin callback execution cannot be inspected")
+                            if flag in value_options:
+                                value = option[offset + 1:]
+                                if not value:
+                                    if position >= len(operands):
+                                        raise ValueError("missing input builtin option operand")
+                                    value = operands[position]
+                                    position += 1
+                                if name == "read" and flag == "a":
+                                    targets.append(value)
+                                break
+                    targets = targets or (["REPLY"] if name == "read" else ["MAPFILE"])
+                    for target in targets:
+                        indexed = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\[(.*)\]", target)
+                        variable = indexed.group(1) if indexed else target
+                        if indexed:
+                            _, guarded = inspect_substitutions(indexed.group(2), depth + 1, quote_sensitive=False)
+                            if guarded or not literal_arithmetic(indexed.group(2)):
+                                raise ValueError("unresolved input destination arithmetic cannot be inspected")
+                        elif not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", target):
+                            raise ValueError("unresolved input builtin variable target")
+                        if variable in integer_names:
+                            raise ValueError("unresolved input builtin integer assignment")
                 head = False
                 continue
             if name == "let":

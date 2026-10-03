@@ -90,6 +90,77 @@ class EvaluationRunner(unittest.TestCase):
 
 
 class McpRegistration(unittest.TestCase):
+    def test_relative_profile_memory_path_survives_changed_cwd(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile = root / "profile"
+            profile.mkdir()
+            binary = root / "bin"
+            binary.mkdir()
+            stub = binary / "claude"
+            stub.write_text("""#!/usr/bin/env python3
+import json,os,sys
+from pathlib import Path
+store=Path(os.environ['CLAUDE_CONFIG_DIR'])/'.claude.json'
+name=sys.argv[sys.argv.index('--scope')+2]
+data=json.loads(store.read_text()) if store.exists() else {'mcpServers':{}}
+entry={'command':'fixture'}
+if '--env' in sys.argv:
+    key,value=sys.argv[sys.argv.index('--env')+1].split('=',1)
+    entry['env']={key:value}
+data['mcpServers'][name]=entry
+store.write_text(json.dumps(data))
+""")
+            stub.chmod(0o755)
+            env = dict(
+                os.environ,
+                HOME=str(root),
+                CLAUDE_CONFIG_DIR="./profile",
+                PATH=str(binary) + os.pathsep + os.environ["PATH"],
+            )
+            result = subprocess.run(
+                ["bash", str(SOURCE / "toolkit/scripts/03-mcp-servers.sh")],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            store = profile / ".claude.json"
+            before = store.read_bytes()
+            path = json.loads(before)["mcpServers"]["memory"]["env"]["MEMORY_FILE_PATH"]
+            self.assertEqual(path, str(profile.resolve() / "memory/graph.json"))
+            elsewhere = root / "other-project"
+            elsewhere.mkdir()
+            env["CLAUDE_CONFIG_DIR"] = str(profile.resolve())
+            again = subprocess.run(
+                ["bash", str(SOURCE / "toolkit/scripts/03-mcp-servers.sh")],
+                cwd=elsewhere,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertEqual(store.read_bytes(), before)
+            for invalid_path in ("./memory/graph.json", 17):
+                existing = json.loads(before)
+                existing["mcpServers"]["memory"]["env"]["MEMORY_FILE_PATH"] = invalid_path
+                store.write_text(json.dumps(existing))
+                invalid_bytes = store.read_bytes()
+                rejected = subprocess.run(
+                    ["bash", str(SOURCE / "toolkit/scripts/03-mcp-servers.sh")],
+                    cwd=elsewhere,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertEqual(store.read_bytes(), invalid_bytes)
+                self.assertIn("memory (preserved)", rejected.stderr)
+
     def test_registration_preserves_existing_entries_and_second_run_is_read_only(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
