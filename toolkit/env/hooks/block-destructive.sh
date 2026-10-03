@@ -277,7 +277,11 @@ def shell_tokens(command):
             if quote == chr(34) and char in "$`":
                 marked.append(expansion_marker)
             if quote == chr(34) and (
-                char == "`" or (normalized.startswith("$(", position) and not normalized.startswith("$((", position))
+                char == "`"
+                or (
+                    normalized.startswith("$(", position)
+                    and not normalized.startswith("$((", position)
+                )
             ):
                 substitution = True
             if char == quote:
@@ -285,7 +289,10 @@ def shell_tokens(command):
         elif char in (chr(39), chr(34)):
             quote = char
             marked.append(marker)
-        elif char == "`" or (normalized.startswith("$(", position) and not normalized.startswith("$((", position)):
+        elif char == "`" or (
+            normalized.startswith("$(", position)
+            and not normalized.startswith("$((", position)
+        ):
             substitution = True
             marked.append(expansion_marker)
         elif char in "$*?[{~":
@@ -313,9 +320,18 @@ def shell_tokens(command):
     # search patterns and printed strings containing Git commands are ordinary data.
     group = []
     for word, operator in tokens + [(";", True)]:
-        if operator and any(char in word for char in ";&\n"):
+        if (
+            operator
+            and word not in ("|", "|&")
+            and any(char in word for char in ";&\n")
+        ):
             heads = executable_heads(group)
-            if any(head in {"bash", "sh", "zsh", "dash", "ksh"} for head in heads) and any(is_operator and any(char in value for char in "<|") for value, is_operator in group):
+            if any(
+                head in {"bash", "sh", "zsh", "dash", "ksh"} for head in heads
+            ) and any(
+                is_operator and any(char in value for char in "<|")
+                for value, is_operator in group
+            ):
                 raise ValueError("opaque executable shell input cannot be inspected")
             if any(head in {"eval", "source", "."} for head in heads):
                 raise ValueError("opaque eval or source program cannot be inspected")
@@ -340,6 +356,7 @@ def shell_tokens(command):
         else:
             group.append((word, operator))
     return tokens
+
 
 try:
     tokens = shell_tokens(command)

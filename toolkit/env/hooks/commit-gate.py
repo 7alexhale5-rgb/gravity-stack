@@ -257,7 +257,11 @@ def shell_tokens(command):
             if quote == chr(34) and char in "$`":
                 marked.append(expansion_marker)
             if quote == chr(34) and (
-                char == "`" or (normalized.startswith("$(", position) and not normalized.startswith("$((", position))
+                char == "`"
+                or (
+                    normalized.startswith("$(", position)
+                    and not normalized.startswith("$((", position)
+                )
             ):
                 substitution = True
             if char == quote:
@@ -265,7 +269,10 @@ def shell_tokens(command):
         elif char in (chr(39), chr(34)):
             quote = char
             marked.append(marker)
-        elif char == "`" or (normalized.startswith("$(", position) and not normalized.startswith("$((", position)):
+        elif char == "`" or (
+            normalized.startswith("$(", position)
+            and not normalized.startswith("$((", position)
+        ):
             substitution = True
             marked.append(expansion_marker)
         elif char in "$*?[{~":
@@ -293,9 +300,18 @@ def shell_tokens(command):
     # search patterns and printed strings containing Git commands are ordinary data.
     group = []
     for word, operator in tokens + [(";", True)]:
-        if operator and any(char in word for char in ";&\n"):
+        if (
+            operator
+            and word not in ("|", "|&")
+            and any(char in word for char in ";&\n")
+        ):
             heads = executable_heads(group)
-            if any(head in {"bash", "sh", "zsh", "dash", "ksh"} for head in heads) and any(is_operator and any(char in value for char in "<|") for value, is_operator in group):
+            if any(
+                head in {"bash", "sh", "zsh", "dash", "ksh"} for head in heads
+            ) and any(
+                is_operator and any(char in value for char in "<|")
+                for value, is_operator in group
+            ):
                 raise ValueError("opaque executable shell input cannot be inspected")
             if any(head in {"eval", "source", "."} for head in heads):
                 raise ValueError("opaque eval or source program cannot be inspected")
@@ -322,9 +338,44 @@ def shell_tokens(command):
     return tokens
 
 
+def harmless_shell_diagnostic(command):
+    """Recognize a small literal builtin grammar, without executing its input."""
+    if re.fullmatch(r'\s*echo\s+"\$\(\s*pwd\s*\)"\s*', command):
+        return True
+    if any(char in command for char in "$`\\"):
+        return False
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
+    lexer.whitespace = " \t\r"
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    at_head = True
+    seen_builtin = False
+    try:
+        for word in lexer:
+            if word in (";", "&&", "||", "\n"):
+                at_head = True
+            elif at_head and word in ("if", "then", "else", "elif", "fi"):
+                continue
+            elif at_head:
+                if word not in ("echo", "printf", "pwd", "true", "false", ":"):
+                    return False
+                seen_builtin = True
+                at_head = False
+            elif all(char in ";&|()<>\n" for char in word):
+                return False
+    except ValueError:
+        return False
+    return seen_builtin
+
+
 def commit_directories(command, base):
     """Resolve literal cd/Git options; never execute the submitted shell command."""
-    tokens = shell_tokens(command)
+    try:
+        tokens = shell_tokens(command)
+    except ValueError:
+        if harmless_shell_diagnostic(command):
+            return []
+        raise
     at_head = True
     for word, operator in tokens:
         if operator:

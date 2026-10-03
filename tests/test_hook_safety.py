@@ -24,6 +24,7 @@ class DestructiveHookTests(unittest.TestCase):
     def test_shell_input_channels_with_quoted_git_refuse(self):
         for command in (
             "bash <<< '\"git\" push --force origin main'",
+            "printf '%s' '\"git\" push --force origin main' |& bash",
             "printf '%s' '\"git\" push --force origin main' | bash",
             "bash <(printf '%s' '\"git\" push --force origin main')",
         ):
@@ -412,10 +413,26 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_unrelated_literal_diagnostics_and_conditionals_remain_usable(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                'echo "$(pwd)"',
+                "if true; then printf ok; fi",
+                "printf '%s' '|&'",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+            for command in (
+                "if true; then printf ok; fi; git commit -am x",
+                'echo "$(pwd; git commit -am x)"',
+            ):
+                self.assertEqual(self.run_hook(hook, command), (2, 0))
+
     def test_shell_input_channels_with_quoted_git_refuse(self):
         for hook in COMMIT_HOOKS:
             for command in (
                 "bash <<< '\"git\" commit -am x'",
+                "printf '%s' '\"git\" commit -am x' |& bash",
                 "printf '%s' '\"git\" commit -am x' | bash",
                 "bash <(printf '%s' '\"git\" commit -am x')",
             ):
