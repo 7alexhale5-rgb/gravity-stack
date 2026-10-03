@@ -78,6 +78,10 @@ def shell_tokens(command):
                 else (token, bool(token) and all(char in ";&|\n" for char in token))
             )
             if operator:
+                if any(char in "<>" for char in word) and (
+                    at_head or (len(heads) == 1 and heads[0].isdigit())
+                ):
+                    raise ValueError("unsupported leading shell redirection")
                 at_head = True
                 wrapped = False
             elif at_head:
@@ -387,8 +391,7 @@ def commit_directories(command, base):
         if args[0] in ("!", "time"):
             # Prefixes change shell flow and can hide stateful directory builtins.
             # Refuse a later commit rather than compiling a guessed directory.
-            uncertain_cwd = True
-            continue
+            raise ValueError("unsupported prefix before a possible Git commit")
         assignment_count = 0
         while assignment_count < len(args) and re.match(
             r"^[A-Za-z_][A-Za-z0-9_]*=", args[assignment_count]

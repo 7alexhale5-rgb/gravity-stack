@@ -98,6 +98,10 @@ def shell_tokens(command):
                 else (token, bool(token) and all(char in ";&|\n" for char in token))
             )
             if operator:
+                if any(char in "<>" for char in word) and (
+                    at_head or (len(heads) == 1 and heads[0].isdigit())
+                ):
+                    raise ValueError("unsupported leading shell redirection")
                 at_head = True
                 wrapped = False
             elif at_head:

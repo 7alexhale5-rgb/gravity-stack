@@ -21,6 +21,13 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_leading_redirections_cannot_hide_shell_programs(self):
+        for command in (
+            ">/dev/null bash -c 'git push --force origin main'",
+            "2>/dev/null bash -c 'git push --force origin main'",
+        ):
+            self.assertEqual(self.decision(command), "deny")
+
     def test_unsupported_shell_control_structures_refuse(self):
         for command in (
             "if true; then bash -c 'git push --force origin main'; fi",
@@ -391,6 +398,17 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_prefixed_commits_and_redirected_shells_refuse(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "time git commit -m test",
+                "! git commit -m test",
+                ">/dev/null bash -c 'git commit -m test'",
+                "2>/dev/null bash -c 'git commit -m test'",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (2, 0))
+
     def test_unsupported_controls_and_negated_directory_changes_refuse(self):
         for hook in COMMIT_HOOKS:
             for command in (
