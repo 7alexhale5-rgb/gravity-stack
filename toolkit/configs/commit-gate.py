@@ -81,6 +81,25 @@ def shell_tokens(command):
                 at_head = True
                 wrapped = False
             elif at_head:
+                if word in {
+                    "if",
+                    "then",
+                    "else",
+                    "elif",
+                    "fi",
+                    "for",
+                    "while",
+                    "until",
+                    "do",
+                    "done",
+                    "case",
+                    "esac",
+                    "select",
+                    "function",
+                    "{",
+                    "}",
+                }:
+                    raise ValueError("unsupported shell control structure")
                 if word in {"!", "time"}:
                     wrapped = wrapped or word == "time"
                     continue
@@ -364,6 +383,11 @@ def commit_directories(command, base):
     uncertain_cwd = False
     for args, conditional in segments:
         if not args:
+            continue
+        if args[0] in ("!", "time"):
+            # Prefixes change shell flow and can hide stateful directory builtins.
+            # Refuse a later commit rather than compiling a guessed directory.
+            uncertain_cwd = True
             continue
         assignment_count = 0
         while assignment_count < len(args) and re.match(

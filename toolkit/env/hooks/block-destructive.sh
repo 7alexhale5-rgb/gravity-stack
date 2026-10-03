@@ -101,6 +101,25 @@ def shell_tokens(command):
                 at_head = True
                 wrapped = False
             elif at_head:
+                if word in {
+                    "if",
+                    "then",
+                    "else",
+                    "elif",
+                    "fi",
+                    "for",
+                    "while",
+                    "until",
+                    "do",
+                    "done",
+                    "case",
+                    "esac",
+                    "select",
+                    "function",
+                    "{",
+                    "}",
+                }:
+                    raise ValueError("unsupported shell control structure")
                 if word in {"!", "time"}:
                     wrapped = wrapped or word == "time"
                     continue

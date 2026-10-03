@@ -21,6 +21,15 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_unsupported_shell_control_structures_refuse(self):
+        for command in (
+            "if true; then bash -c 'git push --force origin main'; fi",
+            "while true; do bash -c 'git push --force origin main'; done",
+            "if false; then echo safe; else bash -c 'git push --force origin main'; fi",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+
     def test_negated_or_quoted_shell_programs_cannot_hide_pushes(self):
         for command in (
             "! bash -c 'git push --force origin main'",
@@ -382,6 +391,18 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_unsupported_controls_and_negated_directory_changes_refuse(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "if true; then bash -c 'git commit -m test'; fi",
+                "while true; do bash -c 'git commit -m test'; done",
+                "if false; then echo safe; else bash -c 'git commit -m test'; fi",
+                "! cd ../broken; git commit -am test",
+                "time cd ../broken; git commit -am test",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (2, 0))
+
     def test_negated_or_quoted_shell_programs_cannot_hide_commits(self):
         for hook in COMMIT_HOOKS:
             for command in (
