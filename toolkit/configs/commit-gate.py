@@ -158,6 +158,8 @@ def shell_tokens(command):
                 redirection_operand = False
                 continue
             if raw and all(c in ";&|()<>\n" for c in raw):
+                if wrapper_operand:
+                    return True
                 if any(c in "<>" for c in raw):
                     redirection_operand = True
                 else:
@@ -283,7 +285,11 @@ def shell_tokens(command):
                         and any(c in "<>" for c in words[index + 1])
                     ):
                         return True
+                    if argument and all(c in ";&|()<>\n" for c in words[index]):
+                        break
                     if argument in ("-C", "-c", "--git-dir", "--work-tree"):
+                        if index + 1 >= len(words) or "\ue002" in words[index + 1] or (words[index + 1] and all(c in ";&|()<>\n" for c in words[index + 1])):
+                            return True
                         index += 2
                     elif argument.startswith(
                         ("-C", "-c", "--git-dir=", "--work-tree=")
@@ -794,6 +800,12 @@ def commit_directories(command, base):
         if args[0] in ("pushd", "popd", "eval", "source", ".", "export"):
             uncertain_cwd = True
         if not git_executable(args[0]):
+            # A preceding program could alter Git configuration between this
+            # read-only query and the later commit. Keep uncertain programs in
+            # separate hook invocations; unrelated commands without commits are
+            # unaffected. Literal printing and simple tests do not mutate state.
+            if effective_args and effective_args[0] not in ("printf", "echo", "pwd", "true", "false", "test", "["):
+                uncertain_cwd = True
             if any(git_executable(word) for word in args) and "commit" in args:
                 raise ValueError(
                     "use a literal Git command so the commit directory can be checked"
@@ -860,6 +872,13 @@ def commit_directories(command, base):
                         "unsupported Git option; use literal -C or --work-tree"
                     )
                 break
+        if position < len(args) and args[position] != "commit":
+            subcommand = args[position]
+            readonly = subcommand in ("status", "diff", "show", "log", "rev-parse", "ls-files", "ls-tree", "check-attr", "check-ignore", "describe")
+            if subcommand == "config":
+                config_args = args[position + 1:]
+                readonly = any(word in ("--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l") for word in config_args) and not any(word in ("--edit", "-e", "--unset", "--unset-all", "--add", "--replace-all", "--rename-section", "--remove-section") for word in config_args)
+            uncertain_cwd |= not readonly
         if position < len(args) and args[position] == "commit":
             if config_worktree:
                 raise ValueError("inline Git configuration effects cannot be inspected")
@@ -895,13 +914,6 @@ def commit_directories(command, base):
         )
     resolved_targets = []
     for target, explicit in targets:
-        invocation = Path(git_queries[(target, explicit)][2])
-        marker = next((path for path in (target, *target.parents, invocation, *invocation.parents) if (path / ".git").exists()), None)
-        # No discoverable repository has stored Git configuration to redirect this
-        # standalone compiler probe. Git itself will reject an actual commit there.
-        if marker is None and "--git-dir" not in git_queries[(target, explicit)]:
-            resolved_targets.append((target, explicit))
-            continue
         process = subprocess.Popen(git_queries[(target, explicit)], stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True)
         try:
@@ -910,14 +922,22 @@ def commit_directories(command, base):
             process.kill()
             process.communicate()
             raise ValueError("Git worktree query timed out")
-        if process.returncode or not stdout.strip() or len(stdout.splitlines()) != 1:
+        if process.returncode:
+            # Git discovery itself, rather than a missing .git child, establishes
+            # a nonrepository. Other failures remain an explicit refusal.
+            if process.returncode == 128 and not stdout and stderr.startswith("fatal: not a git repository"):
+                resolved_targets.append((target, explicit))
+                continue
             raise ValueError("actual Git worktree cannot be established")
-        actual = Path(stdout.strip()).resolve(strict=True)
+        if not stdout.endswith("\n") or stdout.count("\n") != 1 or not stdout[:-1]:
+            raise ValueError("actual Git worktree output is ambiguous")
+        actual = Path(stdout[:-1]).resolve(strict=True)
         if not actual.is_dir():
             raise ValueError("actual Git worktree is not a directory")
         # Preserve package/subdirectory selection within the verified worktree.
         # Stored core.worktree may instead redirect to a separate directory.
-        if explicit or actual not in (target, *target.parents):
+        direct_git_directory = (target / "HEAD").is_file() and ((target / "objects").is_dir() or (target / "commondir").is_file())
+        if explicit or direct_git_directory or actual not in (target, *target.parents):
             target, explicit = actual, True
         resolved_targets.append((target, explicit))
     return resolved_targets

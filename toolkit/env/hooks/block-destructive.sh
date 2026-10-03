@@ -178,6 +178,8 @@ def shell_tokens(command):
                 redirection_operand = False
                 continue
             if raw and all(c in ";&|()<>\n" for c in raw):
+                if wrapper_operand:
+                    return True
                 if any(c in "<>" for c in raw):
                     redirection_operand = True
                 else:
@@ -303,7 +305,11 @@ def shell_tokens(command):
                         and any(c in "<>" for c in words[index + 1])
                     ):
                         return True
+                    if argument and all(c in ";&|()<>\n" for c in words[index]):
+                        break
                     if argument in ("-C", "-c", "--git-dir", "--work-tree"):
+                        if index + 1 >= len(words) or "\ue002" in words[index + 1] or (words[index + 1] and all(c in ";&|()<>\n" for c in words[index + 1])):
+                            return True
                         index += 2
                     elif argument.startswith(
                         ("-C", "-c", "--git-dir=", "--work-tree=")
@@ -725,6 +731,8 @@ for index, (word, operator) in enumerate(tokens):
         if getattr(flag, "expanded", False):
             deny("expanded Git command or options cannot be inspected")
         if flag in ("-c", "-C", "--git-dir", "--work-tree", "--config-env", "--namespace"):
+            if pos + 1 >= len(args) or getattr(args[pos + 1], "expanded", False):
+                deny("missing or expanded Git option operand cannot be inspected")
             inline_config |= flag in ("-c", "--config-env")
             pos += 2
         elif flag.startswith(("-c", "-C", "--git-dir=", "--work-tree=", "--config-env=", "--namespace=", "--exec-path=", "--attr-source=")):
