@@ -93,10 +93,25 @@ def shell_tokens(command):
                 end = text.find("}", position + 2)
                 reference = text[position + 2 : end] if end >= 0 else ""
                 indexed = re.match(r"^[A-Za-z_][A-Za-z0-9_]*\[(.*)\]", reference)
-                if indexed and not literal_arithmetic(indexed.group(1)):
+                if (
+                    indexed
+                    and indexed.group(1) not in ("@", "*")
+                    and not literal_arithmetic(indexed.group(1))
+                ):
                     raise ValueError(
                         "unresolved arithmetic array reference cannot be inspected"
                     )
+                sliced = re.match(
+                    r"^(?:[A-Za-z_][A-Za-z0-9_]*(?:\[.*?\])?|[@*]):(.*)$", reference
+                )
+                if sliced and not sliced.group(1).startswith(("-", "+", "=", "?")):
+                    parts = sliced.group(1).split(":")
+                    if len(parts) > 2 or any(
+                        not literal_arithmetic(value or "0") for value in parts
+                    ):
+                        raise ValueError(
+                            "unresolved parameter slice arithmetic cannot be inspected"
+                        )
             bare_arithmetic = not quote and text.startswith("((", position)
             if text.startswith("$((", position) or bare_arithmetic:
                 # Arithmetic quotes do not prevent command substitution. Inspect
@@ -279,6 +294,17 @@ def shell_tokens(command):
                     index += 1
                     while index < len(words) and balance:
                         punctuation = words[index]
+                        # Unquoted [index]=value in a compound assignment
+                        # evaluates the index. Whole quoted words remain data.
+                        if not punctuation.startswith("\ue003"):
+                            indexed = re.match(
+                                r"^\[(.*)\]\+?=",
+                                punctuation.replace("\ue002", "").replace("\ue003", ""),
+                            )
+                            if indexed and not literal_arithmetic(indexed.group(1)):
+                                raise ValueError(
+                                    "unresolved compound array index cannot be inspected"
+                                )
                         if punctuation and all(c in ";&|()<>\n" for c in punctuation):
                             for offset, char in enumerate(punctuation):
                                 balance += (char == "(") - (char == ")")
@@ -587,6 +613,18 @@ def shell_tokens(command):
                     return True
                 continue
             if git_executable(word):
+                for operand in words[index:]:
+                    if operand and all(c in ";&|()<>\n" for c in operand):
+                        break
+                    option = operand.replace("\ue003", "")
+                    option_name = option.partition("=")[0]
+                    if len(option_name) > 2 and any(
+                        flag.startswith(option_name)
+                        for flag in ("--receive-pack", "--exec")
+                    ):
+                        raise ValueError(
+                            "custom Git transport programs cannot be inspected"
+                        )
                 while index < len(words):
                     argument = words[index].replace("\ue003", "")
                     if "\ue002" in argument:

@@ -496,6 +496,130 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_actual_compound_array_and_parameter_arithmetic(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            log = root / "calls"
+            fake = root / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for operation in ("commit -am broken", "push --force origin main"):
+                prefix = "a=(0); expression='a[$(git " + operation + "; printf 0)]'; "
+                for tail in (
+                    "arr=([expression]=1)",
+                    'value=abc; printf "%s" "${value:expression:1}"',
+                    'value=abc; printf "%s" "${value:0:expression}"',
+                    'files=(one two); printf "%s" "${files[@]:expression:1}"',
+                ):
+                    command = prefix + tail
+                    log.write_text("")
+                    subprocess.run(
+                        ["bash", "-c", command], env=env, capture_output=True, timeout=3
+                    )
+                    self.assertIn(operation, log.read_text(), command)
+                    with self.subTest(command=command):
+                        if operation.startswith("commit"):
+                            for hook in COMMIT_HOOKS:
+                                self.assertEqual(self.run_hook(hook, command), (2, 0))
+                        else:
+                            self.assertEqual(
+                                DestructiveHookTests().decision(command), "deny"
+                            )
+
+    def test_whole_arrays_and_literal_array_contents_remain_data(self):
+        for command in (
+            'files=(one two); printf "%s\\n" "${files[@]}"',
+            'files=(one two); printf "%s" "${files[*]}"',
+            'files=(one two); printf "%s" "${files[@]:0:1}"',
+            "files=('[expression]=1' 'git commit -am printed')",
+            'value=abc; printf "%s" "${value:0:1}"',
+            'value=abc; printf "%s" "${value:-fallback}"',
+        ):
+            for hook in COMMIT_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+            self.assertEqual(DestructiveHookTests().decision(command), "allow")
+
+    def test_actual_local_transport_custom_program_is_guarded(self):
+        import shlex
+
+        actual_git = shutil.which("git")
+        receiver = shutil.which("git-receive-pack")
+        self.assertIsNotNone(receiver)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository, remote, bin_dir = (
+                root / "repository",
+                root / "remote.git",
+                root / "bin",
+            )
+            bin_dir.mkdir()
+            log = root / "calls"
+            fake = bin_dir / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            subprocess.run(
+                [actual_git, "init", "-q", "--initial-branch=feature", str(repository)],
+                check=True,
+            )
+            subprocess.run(
+                [actual_git, "init", "--bare", "-q", str(remote)], check=True
+            )
+            subprocess.run(
+                [
+                    actual_git,
+                    "-C",
+                    str(repository),
+                    "-c",
+                    "user.name=fixture",
+                    "-c",
+                    "user.email=fixture@example.test",
+                    "commit",
+                    "--allow-empty",
+                    "-qm",
+                    "fixture",
+                ],
+                check=True,
+            )
+            env = dict(
+                os.environ,
+                PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            program = (
+                shlex.quote(str(fake))
+                + " push --force origin main; "
+                + shlex.quote(receiver)
+            )
+            for flag in ("--receive-pack", "--exec", "--rece", "--exe"):
+                for equal in (False, True):
+                    option = [flag + "=" + program] if equal else [flag, program]
+                    log.write_text("")
+                    result = subprocess.run(
+                        [actual_git, "push"] + option + [str(remote), "feature"],
+                        cwd=repository,
+                        env=env,
+                        capture_output=True,
+                        timeout=5,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("push --force origin main", log.read_text())
+                    command = "git push " + shlex.join(
+                        option + [str(remote), "feature"]
+                    )
+                    for hook in COMMIT_HOOKS:
+                        with self.subTest(flag=flag, equal=equal, hook=hook):
+                            self.assertEqual(self.run_hook(hook, command), (2, 0))
+                    with self.subTest(flag=flag, equal=equal, guard="push"):
+                        self.assertEqual(
+                            DestructiveHookTests().decision(command), "deny"
+                        )
+
     def test_actual_supplied_wrappers_and_arithmetic_contexts(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -2391,6 +2515,11 @@ class CommitGateTests(unittest.TestCase):
             )
             tokenizers.append(namespace["shell_tokens"])
         for command in (
+            "a=(0); expression=x; arr=([expression]=1)",
+            'files=(one two); printf "%s" "${files[@]}"',
+            'value=abc; printf "%s" "${value:expression:1}"',
+            "git push --receive-pack='git push --force origin main' /tmp/fixture.git feature",
+            "git push --exe=custom /tmp/fixture.git feature",
             "printf '%s\\n' 'git push --force origin main' | xargs env",
             "expression='a[$(git commit -am broken; printf 0)]'; [[ expression -eq 0 ]]",
             "declare -i number; number+=expression",
