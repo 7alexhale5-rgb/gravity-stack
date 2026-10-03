@@ -496,6 +496,73 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_xargs_supplied_shell_programs_are_not_literal_data(self):
+        for git in ("git commit -am broken", "git push --force origin main"):
+            for form in (
+                "printf '%s\\n' '{git}' | xargs -I CMD sh -c CMD",
+                "xargs --replace=CMD sh -c CMD <<'INPUT'\n{git}\nINPUT",
+                "printf '%s\\n' '{git}' | xargs -ICMD nice sh -c CMD",
+                "printf '%s\\n' '{git}' | xargs sh -c",
+                "printf '%s\\n' '{git}' | xargs -I CMD CMD",
+            ):
+                command = form.format(git=git)
+                with self.subTest(command=command):
+                    if "commit" in git:
+                        for hook in COMMIT_HOOKS:
+                            self.assertEqual(self.run_hook(hook, command), (2, 0))
+                    else:
+                        self.assertEqual(
+                            DestructiveHookTests().decision(command), "deny"
+                        )
+        command = "printf '%s\\n' 'git commit -am literal; git push --force origin main' | xargs -I CMD printf '%s' CMD"
+        for hook in COMMIT_HOOKS:
+            self.assertEqual(self.run_hook(hook, command), (0, 0))
+        self.assertEqual(DestructiveHookTests().decision(command), "allow")
+
+    def test_actual_bash_xargs_and_let_execute_fake_git(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake = root / "git"
+            log = root / "calls"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for git in ("git commit -am broken", "git push --force origin main"):
+                for form in (
+                    "printf '%s\\n' '{git}' | xargs -I CMD sh -c CMD",
+                    "xargs -I CMD sh -c CMD <<'INPUT'\n{git}\nINPUT",
+                        "let 'a[$({git}; printf 0)]=1'",
+                    "builtin let 'a[$({git}; printf 0)]=1'",
+                    "(( a[$({git}; printf 0)] = 1 ))",
+                ):
+                    command = form.format(git=git)
+                    log.write_text("")
+                    subprocess.run(
+                        ["bash", "-c", command], env=env, capture_output=True, timeout=3
+                    )
+                    self.assertIn(git[4:], log.read_text(), command)
+                    with self.subTest(command=command):
+                        if "commit" in git:
+                            for hook in COMMIT_HOOKS:
+                                self.assertEqual(self.run_hook(hook, command), (2, 0))
+                        else:
+                            self.assertEqual(
+                                DestructiveHookTests().decision(command), "deny"
+                            )
+        for command in (
+            "let 'count=1+2'",
+            "let 1+2",
+            "(( 1 + 2 ))",
+            "printf '%s' 'let a[$(git commit -am literal)]=1'",
+        ):
+            for hook in COMMIT_HOOKS:
+                self.assertEqual(self.run_hook(hook, command), (0, 0))
+            self.assertEqual(DestructiveHookTests().decision(command), "allow")
+
     def test_watch_constructed_shell_program_and_direct_mode(self):
         for prefix in ("watch -n 5", "watch -n5", "watch --interval=5"):
             for git in ("git commit -am broken", "git push --force origin main"):
@@ -2216,6 +2283,11 @@ class CommitGateTests(unittest.TestCase):
             tokenizers.append(namespace["shell_tokens"])
         for command in (
             "git status &&\ncd docs; git commit -m test",
+            "printf '%s\\n' 'git push --force origin main' | xargs -I CMD sh -c CMD",
+            "let 'a[$(git push --force origin main; printf 0)]=1'",
+            "builtin let 'a[$(git commit -am broken; printf 0)]=1'",
+            "let 'count=1+2'",
+            "(( 1 + 2 ))",
             "watch -n5 echo 'tick; git push --force origin main'",
             "watch --exec -n5 echo 'tick; git push --force origin main'",
             'git commit -am "${XDG_CONFIG_HOME:=/alternate}"',

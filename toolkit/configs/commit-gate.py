@@ -63,6 +63,12 @@ def shell_tokens(command):
         boundary = " \t\n;&|()<>"
         return (not start or text[start - 1] in boundary) and (end == len(text) or text[end] in boundary)
 
+    def literal_arithmetic(expression):
+        # Numeric literals and one simple assignment have no indirect variable
+        # or array lookup whose runtime value could execute substitutions.
+        value = re.sub(r"^\s*[A-Za-z_][A-Za-z0-9_]*\s*=(?!=)", "", expression, count=1)
+        return bool(value.strip()) and bool(re.fullmatch(r"[0-9 \t+*/%()<>|&^!~=.-]+", value))
+
     def inspect_substitutions(text, depth=0, quote_sensitive=True):
         """Recursively inspect executable substitutions, retaining word expansion."""
         if depth > 16:
@@ -83,11 +89,12 @@ def shell_tokens(command):
                     quote = ""
                 position += 1
                 continue
-            if text.startswith("$((", position):
+            bare_arithmetic = not quote and text.startswith("((", position)
+            if text.startswith("$((", position) or bare_arithmetic:
                 # Arithmetic quotes do not prevent command substitution. Inspect
                 # its entire body under arithmetic expansion rules before any
                 # ordinary-shell no-Git fast path can discard the expression.
-                beginning = position + 3
+                beginning = position + (2 if bare_arithmetic else 3)
                 ending = beginning
                 balance = 2
                 arithmetic_quote = ""
@@ -119,7 +126,9 @@ def shell_tokens(command):
                     raise ValueError(
                         "guarded arithmetic substitution cannot be inspected"
                     )
-                rewritten.append("\ue002ARITHMETIC")
+                if bare_arithmetic and not literal_arithmetic(text[beginning : ending - 1]):
+                    raise ValueError("unresolved arithmetic command cannot be inspected")
+                rewritten.append("\ue003true" if bare_arithmetic else "\ue002ARITHMETIC")
                 position = ending + 1
                 continue
             opening = text[position : position + 2]
@@ -182,7 +191,7 @@ def shell_tokens(command):
             position += 1
         return "".join(rewritten), False
 
-    def possible_guarded(text, depth=0):
+    def possible_guarded(text, depth=0, supplied_program=False):
         """Classify executable positions, not diagnostic names or printed data."""
         prepared, hidden = inspect_substitutions(shell_continuations(text), depth)
         if hidden:
@@ -309,6 +318,20 @@ def shell_tokens(command):
                 else:
                     return True
                 continue
+            if name == "let":
+                for operand in words[index:]:
+                    if operand and all(c in ";&|()<>\n" for c in operand):
+                        break
+                    expression = operand.replace("\ue003", "")
+                    if expression == "--":
+                        continue
+                    _, guarded = inspect_substitutions(expression, depth + 1, quote_sensitive=False)
+                    if guarded or not literal_arithmetic(expression):
+                        raise ValueError("unresolved arithmetic builtin cannot be inspected")
+                head = False
+                continue
+            if supplied_program and name in {"bash", "sh", "zsh", "dash", "ksh", "python", "python3", "node", "perl", "ruby", "awk", "watch"}:
+                raise ValueError("xargs supplied interpreter program cannot be inspected")
             if name in {"nice", "nohup", "timeout", "sudo", "setsid", "stdbuf", "chrt", "ionice", "taskset", "doas", "runuser", "xargs", "watch"}:
                 # These programs execute a child. Keep their child executable
                 # visible before the unrelated-command fast path. We refuse
@@ -322,7 +345,7 @@ def shell_tokens(command):
                     "ionice": {"-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "--pgid", "-u", "--uid"},
                     "doas": {"-u", "-C"},
                     "runuser": {"-u", "--user", "-g", "--group", "-G", "--supp-group"},
-                    "xargs": {"-I", "--replace", "-L", "--max-lines", "-n", "--max-args", "-P", "--max-procs", "-s", "--max-chars", "-E", "--eof", "-d", "--delimiter", "-a", "--arg-file"},
+                    "xargs": {"-I", "-L", "--max-lines", "-n", "--max-args", "-P", "--max-procs", "-s", "--max-chars", "-E", "--eof", "-d", "--delimiter", "-a", "--arg-file"},
                     "watch": {"-n", "--interval"},
                 }.get(name, set())
                 child = index
@@ -351,11 +374,13 @@ def shell_tokens(command):
                         "ionice": {"-t", "--ignore"},
                         "taskset": {"-c", "--cpu-list", "-p", "--pid", "-a", "--all-tasks"},
                         "doas": {"-n", "-s"},
-                        "xargs": {"-0", "--null", "-r", "--no-run-if-empty", "-t", "--verbose", "-x", "--exit", "-p", "--interactive"},
+                        "xargs": {"--replace", "-0", "--null", "-r", "--no-run-if-empty", "-t", "--verbose", "-x", "--exit", "-p", "--interactive"},
                         "watch": {"-t", "--no-title", "-d", "--differences", "-e", "--errexit", "-g", "--chgexit", "-c", "--color", "-x", "--exec", "-p", "--precise"},
                     }.get(name, set()):
                         pass
                     elif any(option.startswith(value + "=") for value in operands if value.startswith("--")) or any(option.startswith(value) and len(option) > len(value) for value in operands if len(value) == 2):
+                        pass
+                    elif name == "xargs" and option.startswith("--replace="):
                         pass
                     elif name == "nice" and re.fullmatch(r"-[0-9]+", option):
                         pass
@@ -368,10 +393,28 @@ def shell_tokens(command):
                     else:
                         child += 1  # literal duration, priority or CPU mask
                 if unresolved:
+                    if name == "xargs":
+                        raise ValueError("unresolved xargs executable rewriting cannot be inspected")
                     if any("\ue002" in value or git_executable(value.replace("\ue003", "")) or possible_guarded(value.replace("\ue003", ""), depth + 1) for value in words[index:]):
                         raise ValueError("unresolved executable wrapper cannot inspect guarded work")
                     head = False
                     continue
+                if name == "xargs":
+                    replacements = []
+                    for offset, raw_option in enumerate(words[index:child]):
+                        option = raw_option.replace("\ue003", "")
+                        if option == "-I" and index + offset + 1 < child:
+                            replacements.append(words[index + offset + 1].replace("\ue003", ""))
+                        elif option.startswith("-I") and len(option) > 2:
+                            replacements.append(option[2:])
+                        elif option == "--replace":
+                            replacements.append("{}")
+                        elif option.startswith("--replace="):
+                            replacements.append(option.split("=", 1)[1])
+                    if replacements:
+                        executable = words[child].replace("\ue003", "") if child < len(words) else "echo"
+                        if Path(executable).name not in {"echo", "printf"} or any(not token for token in replacements):
+                            raise ValueError("xargs rewritten executable or program cannot be inspected")
                 watch_shell = name == "watch" and not any(value.replace("\ue003", "") in {"-x", "--exec"} for value in words[index:child])
                 if watch_shell:
                     # Default watch concatenates argv without shell quoting.
@@ -384,7 +427,7 @@ def shell_tokens(command):
                 opaque_shell = name == "sudo" and any(value.replace("\ue003", "") in {"-s", "--shell", "-i", "--login"} for value in words[index:child])
                 if opaque_shell and child < len(words) and possible_guarded(words[child].replace("\ue003", ""), depth + 1):
                     raise ValueError("opaque wrapper shell program cannot inspect guarded work")
-                if possible_guarded(shlex.join(words[child:]), depth + 1):
+                if possible_guarded(shlex.join(words[child:]), depth + 1, supplied_program=supplied_program or name == "xargs"):
                     raise ValueError("guarded child execution wrapper requires a separate literal Git invocation")
                 head = False
                 continue
