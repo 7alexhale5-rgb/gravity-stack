@@ -1074,6 +1074,18 @@ def shell_tokens(command):
                 body = lines[line_index]
                 line_index += 1
                 code.append("\n")
+                # Bash joins unquoted heredoc continuations before expansion or
+                # delimiter recognition. Inspect the same logical line.
+                while (
+                    not quoted
+                    and body.endswith("\n")
+                    and (len(body[:-1]) - len(body[:-1].rstrip(chr(92)))) % 2
+                ):
+                    if line_index >= len(lines):
+                        raise ValueError("unterminated heredoc continuation")
+                    body = body[:-2] + lines[line_index]
+                    line_index += 1
+                    code.append("\n")
                 literal_body = body[:-1] if body.endswith("\n") else body
                 if (literal_body.lstrip("\t") if strip_tabs else literal_body) == delimiter:
                     break
@@ -1214,6 +1226,29 @@ def shell_tokens(command):
             group.append((word, operator))
     return tokens
 
+def git_operation(args):
+    pos = 0
+    inline_config = False
+    while pos < len(args):
+        flag = args[pos]
+        if getattr(flag, "expanded", False):
+            deny("expanded Git command or options cannot be inspected")
+        if flag in ("-c", "-C", "--git-dir", "--work-tree", "--config-env", "--namespace"):
+            if pos + 1 >= len(args) or getattr(args[pos + 1], "expanded", False):
+                deny("missing or expanded Git option operand cannot be inspected")
+            inline_config |= flag in ("-c", "--config-env")
+            pos += 2
+        elif flag.startswith(("-c", "-C", "--git-dir=", "--work-tree=", "--config-env=", "--namespace=", "--exec-path=", "--attr-source=")):
+            inline_config |= flag.startswith(("-c", "--config-env="))
+            pos += 1
+        elif flag in ("-P", "-p", "--no-advice", "--no-pager", "--paginate", "--no-optional-locks", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-replace-objects", "--no-lazy-fetch", "--bare"):
+            pos += 1
+        else:
+            if flag.startswith("-") and "push" in args[pos:]:
+                deny("unsupported Git option before push")
+            break
+    return pos, inline_config
+
 try:
     tokens = shell_tokens(command)
 except ValueError:
@@ -1242,16 +1277,9 @@ if (any(git_executable(word) for word, operator in tokens if not operator)
         if not argv:
             continue
         name = Path(argv[0]).name
-        position = 1
         if git_executable(argv[0]):
-            while position < len(argv):
-                flag = argv[position]
-                if flag in ("-C", "-c", "--git-dir", "--work-tree"):
-                    position += 2
-                elif flag.startswith(("-C", "-c", "--git-dir=", "--work-tree=")) or flag in ("--no-pager", "--no-optional-locks"):
-                    position += 1
-                else:
-                    break
+            position, unused_config = git_operation(argv[1:])
+            position += 1
             operation = argv[position:]
             if operation and operation[0] == "push" and prior_uncertain:
                 deny("push must run separately from preceding state-changing commands")
@@ -1301,26 +1329,7 @@ for index, (word, operator) in enumerate(tokens):
         args.append(part)
     if redirection and "push" in args:
         deny("Git push with redirection cannot be fully inspected; use a literal push")
-    pos = 0
-    inline_config = False
-    while pos < len(args):
-        flag = args[pos]
-        if getattr(flag, "expanded", False):
-            deny("expanded Git command or options cannot be inspected")
-        if flag in ("-c", "-C", "--git-dir", "--work-tree", "--config-env", "--namespace"):
-            if pos + 1 >= len(args) or getattr(args[pos + 1], "expanded", False):
-                deny("missing or expanded Git option operand cannot be inspected")
-            inline_config |= flag in ("-c", "--config-env")
-            pos += 2
-        elif flag.startswith(("-c", "-C", "--git-dir=", "--work-tree=", "--config-env=", "--namespace=", "--exec-path=", "--attr-source=")):
-            inline_config |= flag.startswith(("-c", "--config-env="))
-            pos += 1
-        elif flag in ("-P", "-p", "--no-advice", "--no-pager", "--paginate", "--no-optional-locks", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-replace-objects", "--no-lazy-fetch", "--bare"):
-            pos += 1
-        else:
-            if flag.startswith("-") and "push" in args[pos:]:
-                deny("unsupported Git option before push")
-            break
+    pos, inline_config = git_operation(args)
     if pos >= len(args) or args[pos] != "push":
         continue
     if any(getattr(arg, "expanded", False) for arg in args):

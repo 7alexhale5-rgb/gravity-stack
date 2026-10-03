@@ -498,6 +498,105 @@ class DestructiveHookTests(unittest.TestCase):
 
 class CommitGateTests(unittest.TestCase):
 
+    def run_fixture_git(self, argv, **kwargs):
+        if not hasattr(self, "_git_fixture_root"):
+            temporary = tempfile.TemporaryDirectory(prefix="gravity-owned-git-config-")
+            self.addCleanup(temporary.cleanup)
+            self._git_fixture_root = Path(temporary.name)
+            (self._git_fixture_root / "hooks").mkdir()
+        env = dict(kwargs.pop("env", os.environ))
+        env = {key: value for key, value in env.items() if not key.startswith("GIT_")}
+        env.update(HOME=str(self._git_fixture_root), XDG_CONFIG_HOME=str(self._git_fixture_root / "xdg"), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+        command = [argv[0], "-c", "commit.gpgSign=false", "-c", "core.hooksPath=" + str(self._git_fixture_root / "hooks")] + list(argv[1:])
+        return subprocess.run(command, env=env, **kwargs)
+
+    def test_review33_unquoted_heredoc_logical_lines_execute_only_fake_git(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(binary) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for operation in ("commit -am broken", "push --force origin main"):
+                command = "cat <<EOF\n$\\\n(git " + operation + ")\nEOF"
+                log.write_text("")
+                executed = subprocess.run(
+                    ["bash", "-c", command],
+                    cwd=root,
+                    env=env,
+                    capture_output=True,
+                    timeout=5,
+                )
+                self.assertEqual(executed.returncode, 0, executed.stderr)
+                self.assertIn(operation, log.read_text())
+                if operation.startswith("commit"):
+                    for hook in COMMIT_HOOKS:
+                        self.assertEqual(self.run_hook(hook, command), (2, 0))
+                else:
+                    self.assertEqual(DestructiveHookTests().decision(command), "deny")
+                quoted = command.replace("<<EOF", "<<'EOF'")
+                for hook in COMMIT_HOOKS:
+                    self.assertEqual(self.run_hook(hook, quoted), (0, 0))
+                self.assertEqual(DestructiveHookTests().decision(quoted), "allow")
+
+    def test_review33_git_global_options_preserve_preceding_mutation_check(self):
+        for prefix in (
+            "-P",
+            "-p",
+            "--paginate",
+            "--no-advice",
+            "--namespace=fixture",
+            "--no-replace-objects",
+        ):
+            command = (
+                "git config remote.origin.mirror true; git " + prefix + " push origin"
+            )
+            self.assertEqual(DestructiveHookTests().decision(command), "deny", command)
+            self.assertEqual(
+                DestructiveHookTests().decision(
+                    "git " + prefix + " push origin feature"
+                ),
+                "allow",
+                prefix,
+            )
+
+    def test_review33_actual_git_fixtures_ignore_owned_poisoned_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home = root / "home"
+            home.mkdir()
+            hooks = root / "hooks"
+            hooks.mkdir()
+            marker = root / "host-hook-called"
+            hook = hooks / "pre-commit"
+            hook.write_text(
+                "#!/bin/sh\nprintf called > " + shlex.quote(str(marker)) + "\n"
+            )
+            hook.chmod(0o755)
+            config = home / ".gitconfig"
+            config.write_text(
+                "[core]\n\thooksPath = "
+                + str(hooks)
+                + "\n[commit]\n\tgpgSign = false\n"
+            )
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "HOME": str(home),
+                    "XDG_CONFIG_HOME": str(home / "xdg"),
+                    "GIT_CONFIG_GLOBAL": str(config),
+                },
+            ):
+                self.test_actual_inline_git_aliases_cannot_hide_guarded_operations()
+            self.assertFalse(marker.exists(), "real fixture Git ran inherited hooks")
+
     def test_callback32_actual_trap_and_find_use_only_fake_git(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -586,14 +685,14 @@ class CommitGateTests(unittest.TestCase):
             log = root / "calls"
             fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
             fake.chmod(0o755)
-            subprocess.run(
+            self.run_fixture_git(
                 [real_git, "init", str(repo)], check=True, capture_output=True
             )
-            subprocess.run(
+            self.run_fixture_git(
                 [real_git, "-C", str(repo), "config", "user.name", "Fixture"],
                 check=True,
             )
-            subprocess.run(
+            self.run_fixture_git(
                 [
                     real_git,
                     "-C",
@@ -610,7 +709,7 @@ class CommitGateTests(unittest.TestCase):
                     value = "alias.ship=!" + str(fake) + " push --force origin main"
                     args = (["-c" + value] if attached else ["-c", value]) + ["ship"]
                     log.write_text("")
-                    executed = subprocess.run(
+                    executed = self.run_fixture_git(
                         [real_git, "-C", str(repo)] + args,
                         env=env,
                         capture_output=True,
@@ -629,14 +728,14 @@ class CommitGateTests(unittest.TestCase):
                             DestructiveHookTests().decision(command), "deny"
                         )
                 (repo / "change.txt").write_text(str(attached))
-                subprocess.run([real_git, "-C", str(repo), "add", "."], check=True)
+                self.run_fixture_git([real_git, "-C", str(repo), "add", "."], check=True)
                 value = "alias.save=commit"
                 args = (["-c" + value] if attached else ["-c", value]) + [
                     "save",
                     "-m",
                     "Fixture alias commit",
                 ]
-                executed = subprocess.run(
+                executed = self.run_fixture_git(
                     [real_git, "-C", str(repo)] + args, capture_output=True, timeout=3
                 )
                 if attached:
@@ -985,14 +1084,14 @@ class CommitGateTests(unittest.TestCase):
             fake = bin_dir / "git"
             fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
             fake.chmod(0o755)
-            subprocess.run(
+            self.run_fixture_git(
                 [actual_git, "init", "-q", "--initial-branch=feature", str(repository)],
                 check=True,
             )
-            subprocess.run(
+            self.run_fixture_git(
                 [actual_git, "init", "--bare", "-q", str(remote)], check=True
             )
-            subprocess.run(
+            self.run_fixture_git(
                 [
                     actual_git,
                     "-C",
@@ -1022,7 +1121,7 @@ class CommitGateTests(unittest.TestCase):
                 for equal in (False, True):
                     option = [flag + "=" + program] if equal else [flag, program]
                     log.write_text("")
-                    result = subprocess.run(
+                    result = self.run_fixture_git(
                         [actual_git, "push"] + option + [str(remote), "feature"],
                         cwd=repository,
                         env=env,

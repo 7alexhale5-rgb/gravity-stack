@@ -1055,6 +1055,18 @@ def shell_tokens(command):
                 body = lines[line_index]
                 line_index += 1
                 code.append("\n")
+                # Bash joins unquoted heredoc continuations before expansion or
+                # delimiter recognition. Inspect the same logical line.
+                while (
+                    not quoted
+                    and body.endswith("\n")
+                    and (len(body[:-1]) - len(body[:-1].rstrip(chr(92)))) % 2
+                ):
+                    if line_index >= len(lines):
+                        raise ValueError("unterminated heredoc continuation")
+                    body = body[:-2] + lines[line_index]
+                    line_index += 1
+                    code.append("\n")
                 literal_body = body[:-1] if body.endswith("\n") else body
                 if (literal_body.lstrip("\t") if strip_tabs else literal_body) == delimiter:
                     break

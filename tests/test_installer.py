@@ -205,6 +205,25 @@ with (root/'calls').open('a') as f:f.write(name+'\\n')
 
 
 class PhaseSix(unittest.TestCase):
+
+    def test_review33_literal_dollar_profile_shell_spelling(self):
+        self.real_verifier()
+        profile = self.root / "$PROFILE"
+        shutil.copytree(self.home / ".claude", profile)
+        self.env["CLAUDE_CONFIG_DIR"] = str(profile)
+        store = profile / "settings.json"
+        for quoted, expected in ((False, 1), (True, 0)):
+            settings = json.loads(store.read_text())
+            absolute = str(profile / "hooks/commit-gate.py")
+            spelling = shlex.quote(absolute) if quoted else '"' + absolute + '"'
+            settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"] = (
+                "python3 " + spelling
+            )
+            original = json.dumps(settings)
+            store.write_text(original)
+            result = self.run_installer("--skip-dev-protocol")
+            self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+            self.assertEqual(store.read_text(), original)
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="gravity-phase6-")
         self.addCleanup(self.temp.cleanup)

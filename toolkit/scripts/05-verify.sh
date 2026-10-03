@@ -51,9 +51,15 @@ try:
         args = shlex.split(command, posix=False)
         if not args:
             return False
-        interpreter = args[0]
+        interpreter_spelling = args[0]
+        interpreter = interpreter_spelling
         if len(interpreter) >= 2 and interpreter[0] == interpreter[-1] and interpreter[0] in (chr(34), chr(39)):
             interpreter = interpreter[1:-1]
+        if interpreter_spelling != shlex.quote(interpreter) and not (
+            re.fullmatch(r'[A-Za-z0-9_./:@%+=,-]+', interpreter)
+            and interpreter_spelling in (interpreter, '"' + interpreter + '"')
+        ):
+            return False
         if not re.fullmatch(r'python(?:3(?:\.\d+)?)?', Path(interpreter).name) or ("/" in interpreter and not Path(interpreter).is_absolute()):
             return False
         resolved = shutil.which(interpreter)
@@ -70,13 +76,18 @@ try:
         except ValueError:
             relative = None
         absolute = str(gate)
-        supported = {
-            absolute, '"' + absolute + '"', "'" + absolute + "'",
-        }
+        supported = set()
+        def add_literal_spellings(path):
+            supported.add(shlex.quote(path))
+            if re.fullmatch(r'[A-Za-z0-9_./:@%+=,-]+', path):
+                supported.add(path)
+            if not any(char in path for char in ('$', '`', chr(92), '"')):
+                supported.add('"' + path + '"')
+        add_literal_spellings(absolute)
         spelled_gate = str(selected / 'hooks/commit-gate.py')
         if Path(spelled_gate).is_absolute():
-            supported.update({spelled_gate, '"' + spelled_gate + '"', "'" + spelled_gate + "'"})
-        if relative is not None:
+            add_literal_spellings(spelled_gate)
+        if relative is not None and re.fullmatch(r'[A-Za-z0-9_./-]+', relative):
             supported.update({
                 '~/' + relative, '$HOME/' + relative, '${HOME}/' + relative,
                 '"$HOME/' + relative + '"', '"${HOME}/' + relative + '"',
