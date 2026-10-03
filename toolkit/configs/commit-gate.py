@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 
 def shell_continuations(command):
@@ -249,6 +250,14 @@ def shell_tokens(command):
                     pass
                 else:
                     return True
+                continue
+            if name == "function":
+                if index >= len(words) or "\ue002" in words[index] or all(c in ";&|()<>\n" for c in words[index]):
+                    return True
+                # The declaration name is data; the body starts a new executable
+                # context. Function bodies containing guarded work are refused.
+                index += 1
+                head = True
                 continue
             if name in {"eval", "source", "."}:
                 return True
@@ -719,6 +728,7 @@ def commit_directories(command, base):
     segments.append((segment, conditional))
     targets = []
     git_queries = {}
+    readonly_contexts = {}
     directory = base
     uncertain_cwd = False
     for args, conditional in segments:
@@ -874,11 +884,34 @@ def commit_directories(command, base):
                 break
         if position < len(args) and args[position] != "commit":
             subcommand = args[position]
-            readonly = subcommand in ("status", "diff", "show", "log", "rev-parse", "ls-files", "ls-tree", "check-attr", "check-ignore", "describe")
-            if subcommand == "config":
-                config_args = args[position + 1:]
-                readonly = any(word in ("--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l") for word in config_args) and not any(word in ("--edit", "-e", "--unset", "--unset-all", "--add", "--replace-all", "--rename-section", "--remove-section") for word in config_args)
+            options = args[position + 1:]
+            literal = not any(getattr(word, "expanded", False) for word in options)
+            no_pager = "--no-pager" in args[1:position]
+            safe_status = {"--short", "-s", "--branch", "-b", "--porcelain", "--porcelain=v1", "--porcelain=v2", "--untracked-files=no", "-uno", "--ignored=no", "--no-renames", "--ignore-submodules=all"}
+            safe_diff = {"--no-ext-diff", "--no-textconv", "--stat", "--name-only", "--name-status", "--no-patch", "-s", "--oneline", "--no-color", "--color=never", "--no-renames"}
+            readonly = False
+            if subcommand == "status":
+                readonly = literal and all(word in safe_status for word in options)
+            elif subcommand == "config":
+                readonly = literal and len(options) == 2 and options[0] in ("--get", "--get-all") and bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9.-]*", options[1]))
+            elif subcommand == "rev-parse":
+                readonly = literal and bool(options) and all(word in ("--show-toplevel", "--show-prefix", "--is-inside-work-tree", "--git-dir") for word in options)
+            elif subcommand in ("diff", "show", "log"):
+                # Diff drivers, textconv and pagers can execute programs by default.
+                # Output paths and unknown options cannot be considered read-only.
+                readonly = literal and no_pager and "--no-ext-diff" in options and "--no-textconv" in options and all(word in safe_diff for word in options)
+            # grep and every unresolved command/option use separate invocations.
+            readonly &= not config_worktree
             uncertain_cwd |= not readonly
+            if readonly:
+                prefix = ["git", "--no-pager", "-C", str(target)]
+                if gitdir is not None:
+                    prefix += ["--git-dir", str((target / gitdir).resolve())]
+                if worktree is not None:
+                    prefix += ["--work-tree", str((target / worktree).resolve())]
+                keys = ["core.fsmonitor"] + ([] if no_pager else ["pager." + subcommand])
+                pattern = "^(" + "|".join(re.escape(key) for key in keys) + ")$"
+                readonly_contexts[(tuple(prefix), pattern)] = keys
         if position < len(args) and args[position] == "commit":
             if config_worktree:
                 raise ValueError("inline Git configuration effects cannot be inspected")
@@ -912,20 +945,41 @@ def commit_directories(command, base):
         raise ValueError(
             "multiple distinct commit targets require separate hook invocations"
         )
-    resolved_targets = []
-    for target, explicit in targets:
-        process = subprocess.Popen(git_queries[(target, explicit)], stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, text=True)
+    if not targets:
+        return []
+    # Every read-only Git probe shares one three-second budget, followed by the
+    # existing sixty-second compiler budget. A long command chain cannot multiply
+    # query timeouts past the documented seventy-second hook minimum.
+    query_deadline = time.monotonic() + 3
+    def git_probe(query):
+        remaining = query_deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("Git inspection budget exhausted")
+        process = subprocess.Popen(query, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
-            stdout, stderr = process.communicate(timeout=3)
+            stdout, stderr = process.communicate(timeout=remaining)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.communicate()
+            process.communicate(timeout=1)
             raise ValueError("Git worktree query timed out")
-        if process.returncode:
+        return process.returncode, stdout, stderr
+    for (prefix, pattern), keys in readonly_contexts.items():
+        code, output, error = git_probe(list(prefix) + ["config", "--null", "--get-regexp", pattern])
+        if code == 1 or code == 128 and error.startswith("fatal: not a git repository"):
+            continue
+        if code != 0:
+            raise ValueError("prior Git configured execution cannot be established")
+        for entry in output.rstrip("\0").split("\0"):
+            key, separator, value = entry.partition("\n")
+            if not separator or key not in keys or value.strip().lower() not in ("false", "0", "no", "off"):
+                raise ValueError("prior Git configured execution requires a separate invocation")
+    resolved_targets = []
+    for target, explicit in targets:
+        code, stdout, stderr = git_probe(git_queries[(target, explicit)])
+        if code:
             # Git discovery itself, rather than a missing .git child, establishes
             # a nonrepository. Other failures remain an explicit refusal.
-            if process.returncode == 128 and not stdout and stderr.startswith("fatal: not a git repository"):
+            if code == 128 and not stdout and stderr.startswith("fatal: not a git repository"):
                 resolved_targets.append((target, explicit))
                 continue
             raise ValueError("actual Git worktree cannot be established")
@@ -936,28 +990,29 @@ def commit_directories(command, base):
             raise ValueError("actual Git worktree is not a directory")
         # Preserve package/subdirectory selection within the verified worktree.
         # Stored core.worktree may instead redirect to a separate directory.
-        direct_git_directory = (target / "HEAD").is_file() and ((target / "objects").is_dir() or (target / "commondir").is_file())
+        direct_git_directory = False
+        for ancestor in (target, *target.parents):
+            if ancestor == actual:
+                break
+            if (ancestor / "HEAD").is_file() and ((ancestor / "objects").is_dir() or (ancestor / "commondir").is_file()):
+                direct_git_directory = True
+                break
         if explicit or direct_git_directory or actual not in (target, *target.parents):
             target, explicit = actual, True
-        resolved_targets.append((target, explicit))
+        resolved_targets.append((target, actual))
     return resolved_targets
 
 
-def typescript_directory(directory, explicit_worktree):
-    """Find the nearest TS project, bounded by a worktree marker or explicit root."""
-    ancestors = (directory, *directory.parents)
-    boundary = (
-        directory
-        if explicit_worktree
-        else next(
-            (candidate for candidate in ancestors if (candidate / ".git").exists()),
-            None,
-        )
-    )
-    # Without a worktree boundary, do not inspect unrelated parent projects.
+def typescript_directory(directory, worktree_boundary):
+    """Preserve package selection within Git's verified actual worktree root."""
+    boundary = worktree_boundary if isinstance(worktree_boundary, Path) else (directory if worktree_boundary else None)
+    # A proven nonrepository may retain a standalone direct compiler probe, but
+    # never discover unrelated parent projects from independent .git markers.
     if boundary is None:
         return directory if (directory / "tsconfig.json").is_file() else None
-    for candidate in ancestors:
+    if boundary not in (directory, *directory.parents):
+        raise ValueError("compiler path lies outside verified Git worktree")
+    for candidate in (directory, *directory.parents):
         if (candidate / "tsconfig.json").is_file():
             return candidate
         if candidate == boundary:

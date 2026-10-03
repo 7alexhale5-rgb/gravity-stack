@@ -21,6 +21,19 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_function_keyword_cannot_hide_protected_push_body(self):
+        for declaration in (
+            "function ship { git push --force origin main; }; ship",
+            "function ship() { git push --force origin main; }; ship",
+        ):
+            self.assertEqual(self.decision(declaration), "deny")
+        self.assertEqual(
+            self.decision(
+                "function greet { printf '%s' 'git push --force origin main'; }; greet"
+            ),
+            "allow",
+        )
+
     def test_unresolved_global_operand_cannot_expand_into_push(self):
         for option in ("-C", "-c", "--git-dir", "--work-tree"):
             self.assertEqual(self.decision("git " + option + " $ARGS"), "deny")
@@ -482,6 +495,152 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_prior_git_configured_execution_is_refused_or_disabled(self):
+        for hook in COMMIT_HOOKS:
+            for key, prefix, accepted in (
+                ("core.fsmonitor", "git status", False),
+                ("pager.status", "git status", False),
+                ("diff.external", "git diff", False),
+                ("diff.fixture.textconv", "git show", False),
+                (
+                    "diff.external",
+                    "git --no-pager diff --no-ext-diff --no-textconv --stat",
+                    True,
+                ),
+                (
+                    "diff.fixture.textconv",
+                    "git --no-pager show --no-ext-diff --no-textconv --stat",
+                    True,
+                ),
+            ):
+                with (
+                    self.subTest(hook=hook, key=key, prefix=prefix),
+                    tempfile.TemporaryDirectory() as temporary,
+                ):
+                    root = Path(temporary).resolve()
+                    (root / "tsconfig.json").write_text("{}")
+                    subprocess.run(["git", "init", "-q", str(root)], check=True)
+                    marker = root / "must-not-execute"
+                    program = root / "unsafe-execution"
+                    program.write_text("#!/bin/sh\ntouch " + str(marker) + "\n")
+                    program.chmod(0o755)
+                    subprocess.run(
+                        ["git", "-C", str(root), "config", key, str(program)],
+                        check=True,
+                    )
+                    payload = {
+                        "cwd": str(root),
+                        "tool_input": {"command": prefix + "; git commit -am x"},
+                    }
+                    with (
+                        mock.patch.object(
+                            sys, "stdin", io.StringIO(json.dumps(payload))
+                        ),
+                        mock.patch(
+                            "subprocess.run",
+                            return_value=subprocess.CompletedProcess([], 0, "", ""),
+                        ) as compiler,
+                    ):
+                        with self.assertRaises(SystemExit) as stopped:
+                            runpy.run_path(str(hook), run_name="__main__")
+                    self.assertEqual(stopped.exception.code, 0 if accepted else 2)
+                    self.assertEqual(compiler.call_count, int(accepted))
+                    self.assertFalse(marker.exists())
+
+    def test_verified_boundary_preserves_nested_package_checks(self):
+        for hook in COMMIT_HOOKS:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                package = root / "packages" / "site"
+                docs = package / "docs"
+                docs.mkdir(parents=True)
+                (root / "tsconfig.json").write_text("{}")
+                (package / "tsconfig.json").write_text("{}")
+                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                payload = {
+                    "cwd": str(docs),
+                    "tool_input": {"command": "git commit -am x"},
+                }
+                with (
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch(
+                        "subprocess.run",
+                        return_value=subprocess.CompletedProcess(
+                            [], 1, "broken package", ""
+                        ),
+                    ) as compiler,
+                ):
+                    with self.assertRaises(SystemExit) as stopped:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(stopped.exception.code, 2)
+                self.assertEqual(compiler.call_args.kwargs["cwd"], str(package))
+
+    def test_function_keyword_cannot_hide_commit_body(self):
+        for hook in COMMIT_HOOKS:
+            for declaration in (
+                "function ship { git commit -am broken; }; ship",
+                "function ship() { git commit -am broken; }; ship",
+            ):
+                self.assertEqual(self.run_hook(hook, declaration), (2, 0))
+            self.assertEqual(
+                self.run_hook(hook, "function greet { echo healthy; }; greet"), (0, 0)
+            )
+
+    def test_verified_ancestor_worktree_boundary_survives_metadata_marker(self):
+        for hook in COMMIT_HOOKS:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                metadata = root / "metadata"
+                docs = metadata / "docs"
+                docs.mkdir(parents=True)
+                (root / "tsconfig.json").write_text("{}")
+                subprocess.run(["git", "init", "-q", str(metadata)], check=True)
+                subprocess.run(
+                    ["git", "-C", str(metadata), "config", "core.worktree", str(root)],
+                    check=True,
+                )
+                payload = {
+                    "cwd": str(docs),
+                    "tool_input": {"command": "git commit -am broken"},
+                }
+                with (
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch(
+                        "subprocess.run",
+                        return_value=subprocess.CompletedProcess(
+                            [], 1, "broken actual root", ""
+                        ),
+                    ) as compiler,
+                ):
+                    with self.assertRaises(SystemExit) as stopped:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(stopped.exception.code, 2)
+                self.assertEqual(compiler.call_args.kwargs["cwd"], str(root))
+
+    def test_prior_git_options_cannot_write_or_execute_before_commit(self):
+        for hook in COMMIT_HOOKS:
+            for prefix in (
+                "git diff --no-index --output=src/app.ts /dev/null fixture.ts",
+                "git diff --ext-diff",
+                "git show --textconv HEAD",
+                "git log --output=src/app.ts",
+                "git grep --open-files-in-pager pattern",
+                "git diff",
+                "git show",
+                "git log",
+            ):
+                with self.subTest(hook=hook, prefix=prefix):
+                    self.assertEqual(
+                        self.run_hook(hook, prefix + "; git commit -am broken"), (2, 0)
+                    )
+            self.assertEqual(
+                self.run_hook(
+                    hook,
+                    "git --no-pager diff --no-ext-diff --no-textconv --stat; git commit -am x",
+                ),
+                (0, 1),
+            )
+
     def test_unresolved_global_operand_cannot_expand_into_commit(self):
         for hook in COMMIT_HOOKS:
             for option in ("-C", "-c", "--git-dir", "--work-tree"):

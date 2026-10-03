@@ -77,7 +77,7 @@ try:
         for hook in group.get('hooks', []):
             timeout = hook.get('timeout')
             if (hook.get('type') == 'command' and invokes_gate(hook.get('command', ''))
-                    and type(timeout) in (int, float) and timeout > 60):
+                    and type(timeout) in (int, float) and timeout >= 70):
                 registered = True
     raise SystemExit(0 if gate.is_file() and registered else 1)
 except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):

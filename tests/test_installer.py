@@ -342,6 +342,9 @@ chmod +x "$dest/install.sh"
         value = json.loads(store.read_text())
         hook = value["hooks"]["PreToolUse"][0]["hooks"][0]
         for timeout, expected in (
+            (61, 1),
+            (63, 1),
+            (69, 1),
             (None, 1),
             (0, 1),
             (60, 1),

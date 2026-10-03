@@ -270,6 +270,14 @@ def shell_tokens(command):
                 else:
                     return True
                 continue
+            if name == "function":
+                if index >= len(words) or "\ue002" in words[index] or all(c in ";&|()<>\n" for c in words[index]):
+                    return True
+                # The declaration name is data; the body starts a new executable
+                # context. Function bodies containing guarded work are refused.
+                index += 1
+                head = True
+                continue
             if name in {"eval", "source", "."}:
                 return True
             if name in {"bash", "sh", "zsh", "dash", "ksh"}:
