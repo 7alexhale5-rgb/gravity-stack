@@ -2,6 +2,7 @@
 # Claude PreToolUse Bash hook. Inspect literal commands; do not execute them.
 python3 -c '
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -113,6 +114,22 @@ try:
     tokens = shell_tokens(command)
 except ValueError:
     deny("shell command cannot be inspected")
+
+if (any(git_executable(word) for word, operator in tokens if not operator)
+        and any(word == "push" for word, operator in tokens if not operator)):
+    if any(name.startswith("GIT_CONFIG") for name in os.environ):
+        deny("inherited Git configuration environment cannot be safely inspected")
+    heads = []
+    at_head = True
+    for word, operator in tokens:
+        if operator:
+            at_head = True
+        elif at_head:
+            heads.append(word)
+            at_head = False
+    if (any(not operator and word.startswith("GIT_CONFIG") for word, operator in tokens)
+            or any(word in ("source", ".", "export", "eval", "env", "exec", "command") for word in heads)):
+        deny("Git configuration environment or shell wrapper cannot be safely inspected")
 
 if any(not operator and not git_executable(word)
        and re.search(r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\bpush\b", shell_continuations(word))

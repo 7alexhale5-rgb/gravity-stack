@@ -79,7 +79,10 @@ def shell_tokens(command):
         elif char == "`":
             substitution = True
         marked.append(char)
-    if substitution and re.search(r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\b(?:push|commit)\b", shell_continuations(command)):
+    if substitution and re.search(
+        r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\b(?:push|commit)\b",
+        shell_continuations(command),
+    ):
         raise ValueError("Git command substitution cannot be inspected")
     lexer = shlex.shlex("".join(marked), posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
@@ -94,6 +97,14 @@ def shell_tokens(command):
 def commit_directories(command, base):
     """Resolve literal cd/Git options; never execute the submitted shell command."""
     tokens = shell_tokens(command)
+    if (
+        any(git_executable(word) for word, operator in tokens if not operator)
+        and any(word == "commit" for word, operator in tokens if not operator)
+        and any(operator and ("<" in word or ">" in word) for word, operator in tokens)
+    ):
+        raise ValueError(
+            "Git commit redirections cannot be inspected; use a literal commit"
+        )
     if any(
         not operator
         and not git_executable(word)
@@ -136,7 +147,11 @@ def commit_directories(command, base):
             ):
                 uncertain_cwd = True
             else:
-                directory = (directory / args[1]).resolve()
+                path = directory / args[1]
+                if any(part.is_symlink() for part in (path, *path.parents)):
+                    uncertain_cwd = True
+                else:
+                    directory = path.resolve()
             continue
         if args[0] in ("pushd", "popd", "eval", "source", ".", "export"):
             uncertain_cwd = True

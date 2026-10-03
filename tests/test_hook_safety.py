@@ -21,6 +21,25 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_git_environment_configuration_cannot_hide_mirror_push(self):
+        for command in (
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.mirror GIT_CONFIG_VALUE_0=true git push origin",
+            "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.mirror GIT_CONFIG_VALUE_0=true git push origin",
+            "export GIT_CONFIG_COUNT=1; git push origin",
+            "source push-config.sh; git push origin",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+        with mock.patch.dict(
+            os.environ,
+            {
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "remote.origin.mirror",
+                "GIT_CONFIG_VALUE_0": "true",
+            },
+        ):
+            self.assertEqual(self.decision("git push origin"), "deny")
+
     def test_backtick_wrapped_push_is_not_a_literal_git_command(self):
         for command in (
             "echo `git push --force origin main`",
@@ -269,6 +288,40 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_git_redirection_before_commit_cannot_skip_compilation(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "git 2>/dev/null commit -m test",
+                "git -C . 2>/dev/null commit -m test",
+                "git 2>/dev/null -C . commit -m test",
+                "git commit -m test >commit.log",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (2, 0))
+
+    def test_symlink_cd_then_logical_parent_cannot_skip_compilation(self):
+        for hook in COMMIT_HOOKS:
+            with self.subTest(hook=hook), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp).resolve()
+                repo, outside = base / "repo", base / "outside"
+                repo.mkdir()
+                (outside / "child").mkdir(parents=True)
+                (repo / "tsconfig.json").write_text("{}")
+                (repo / "link").symlink_to(outside / "child", target_is_directory=True)
+                payload = {
+                    "cwd": str(repo),
+                    "tool_input": {"command": "cd link; cd ..; git commit -m test"},
+                }
+                with (
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch("subprocess.run") as compiler,
+                    mock.patch.object(sys, "stderr", io.StringIO()),
+                ):
+                    with self.assertRaises(SystemExit) as exit:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(exit.exception.code, 2)
+                compiler.assert_not_called()
+
     def test_backtick_wrapped_commit_cannot_hide_compilation_gate(self):
         for hook in COMMIT_HOOKS:
             for command in (

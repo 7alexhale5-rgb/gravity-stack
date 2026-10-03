@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import stat
@@ -10,6 +11,28 @@ import tempfile
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[1]
+
+
+class FreeFallbackAssertions(unittest.TestCase):
+    def test_documented_free_fallback_can_pass_literal_assertions(self):
+        golden = (SOURCE / ".promptfoo/golden/research-stack.yaml").read_text()
+        fixtures = {
+            "seo": "## SEO scorecard\nPaid SEO tools were unavailable. Free fallback: web search [WS].",
+            "comms": "## Telephony and messaging plan\nPaid comms tools were unavailable. Free fallback: web search [WS].",
+        }
+        for focus, report in fixtures.items():
+            block = next(
+                part
+                for part in golden.split("- description: ")[1:]
+                if "--focus " + focus in part.splitlines()[0]
+            )
+            assertions = re.findall(r"- type: contains-any\n\s+value: (\[.*\])", block)
+            self.assertTrue(assertions)
+            for values in assertions:
+                self.assertTrue(any(tag in report for tag in json.loads(values)), focus)
+            self.assertIn("free fallbacks", block)
+            # This tests literal acceptance only; the semantic rubric still needs
+            # its configured provider and calibrated evaluation, not this fixture.
 
 
 class EvaluationReports(unittest.TestCase):
