@@ -115,7 +115,7 @@ export function Hero() {
           animate={{ opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.8 }}
         >
-          Open source. Every tool verified in production. Every config real. Ready to fork.
+          Open source. Tools, configuration examples, and setup checks. Ready to fork.
         </motion.p>
 
         {/* Stats with glass cards and count-up */}

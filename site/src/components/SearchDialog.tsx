@@ -31,7 +31,7 @@ const searchIndex: SearchItem[] = [
   },
   {
     title: "Plugins",
-    description: "31 verified plugins by category",
+    description: "31 plugins by category",
     href: "/plugins",
     category: "Pages",
   },
