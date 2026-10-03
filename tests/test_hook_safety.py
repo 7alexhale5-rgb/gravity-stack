@@ -21,6 +21,18 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_arithmetic_shifts_are_data_but_command_substitutions_are_guarded(self):
+        for command in (
+            "echo $((1 << 2))",
+            "echo $((8 >> 1))",
+            "echo $((1 << (2 + 1)))",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "allow")
+        self.assertEqual(
+            self.decision("echo $((1 << $(git push --force origin main)))"), "deny"
+        )
+
     def test_push_expansions_refuse_but_literal_dollar_refs_remain_data(self):
         for command in (
             "PUSH_FLAGS=--force; git push origin $PUSH_FLAGS main",
@@ -339,6 +351,67 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_unresolved_git_subcommands_and_executables_refuse(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                'subcommand=commit; git "$subcommand" -m test',
+                "git $SUBCOMMAND -m test",
+                'git "$FLAGS" commit -m test',
+                '"$GIT" commit -m test',
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (2, 0))
+            for command in ("git '$literal' -m test", r"git \$literal -m test"):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+
+    def test_assignment_prefixed_home_cd_cannot_compile_the_wrong_repo(self):
+        for hook in COMMIT_HOOKS:
+            self.assertEqual(
+                self.run_hook(hook, "HOME=/tmp printf cd; git commit -m x"), (0, 1)
+            )
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                clean, broken = root / "clean", root / "broken"
+                for repo in (clean, broken):
+                    repo.mkdir()
+                    (repo / ".git").mkdir()
+                    (repo / "tsconfig.json").write_text("{}")
+                payload = {
+                    "cwd": str(clean),
+                    "tool_input": {
+                        "command": f"HOME={broken} cd && git commit -m test"
+                    },
+                }
+
+                def compile_types(*args, **kwargs):
+                    return subprocess.CompletedProcess(
+                        [], 0 if Path(kwargs["cwd"]) == clean else 1, "fixture", ""
+                    )
+
+                with (
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch("subprocess.run", side_effect=compile_types) as compiler,
+                    mock.patch.object(sys, "stderr", io.StringIO()),
+                ):
+                    with self.assertRaises(SystemExit) as exit:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(exit.exception.code, 2)
+                compiler.assert_not_called()
+
+    def test_arithmetic_shifts_do_not_block_unrelated_commands(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "echo $((1 << 2))",
+                "echo $((8 >> 1))",
+                "echo $((1 << (2 + 1)))",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+            self.assertEqual(
+                self.run_hook(hook, "echo $((1 << $(git commit -m x)))"), (2, 0)
+            )
+
     def test_wrapped_cd_and_cdpath_cannot_change_unchecked_worktree(self):
         for hook in COMMIT_HOOKS:
             for command in (
@@ -704,6 +777,12 @@ class CommitGateTests(unittest.TestCase):
             tokenizers.append(namespace["shell_tokens"])
         for command in (
             "git status &&\ncd docs; git commit -m test",
+            "echo $((1 << 2))",
+            "echo $((8 >> 1))",
+            "echo $((1 << (2 + 1)))",
+            "echo $((1 << $(git commit -m x)))",
+            "echo $((1 << $(git push --force origin main)))",
+            'subcommand=commit; git "$subcommand" -m test',
             'cat <<< "hello"',
             "cat <<< 'git push'",
             'cat <<< "$(git commit -m x)"',

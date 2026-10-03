@@ -116,6 +116,7 @@ def shell_tokens(command):
     code = []
     line_index = 0
     quote_state = ""
+    arithmetic_depth = 0
     had_documents = False
     while line_index < len(lines):
         header = lines[line_index]
@@ -130,6 +131,13 @@ def shell_tokens(command):
                 escaped_header = False
             elif char == "\\" and quote_state != chr(39):
                 escaped_header = True
+            elif arithmetic_depth:
+                if char == "`" or header.startswith("$(", position):
+                    header_substitution = True
+                if char == "(":
+                    arithmetic_depth += 1
+                elif char == ")":
+                    arithmetic_depth -= 1
             elif quote_state:
                 if quote_state == chr(34) and (
                     char == "`" or header.startswith("$(", position)
@@ -139,6 +147,10 @@ def shell_tokens(command):
                     quote_state = ""
             elif char in (chr(39), chr(34)):
                 quote_state = char
+            elif header.startswith("$((", position):
+                arithmetic_depth = 2
+                position += 3
+                continue
             elif char == "`" or header.startswith("$(", position):
                 header_substitution = True
             elif char == "#" and (

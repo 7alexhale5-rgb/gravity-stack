@@ -96,6 +96,7 @@ def shell_tokens(command):
     code = []
     line_index = 0
     quote_state = ""
+    arithmetic_depth = 0
     had_documents = False
     while line_index < len(lines):
         header = lines[line_index]
@@ -110,6 +111,13 @@ def shell_tokens(command):
                 escaped_header = False
             elif char == "\\" and quote_state != chr(39):
                 escaped_header = True
+            elif arithmetic_depth:
+                if char == "`" or header.startswith("$(", position):
+                    header_substitution = True
+                if char == "(":
+                    arithmetic_depth += 1
+                elif char == ")":
+                    arithmetic_depth -= 1
             elif quote_state:
                 if quote_state == chr(34) and (
                     char == "`" or header.startswith("$(", position)
@@ -119,6 +127,10 @@ def shell_tokens(command):
                     quote_state = ""
             elif char in (chr(39), chr(34)):
                 quote_state = char
+            elif header.startswith("$((", position):
+                arithmetic_depth = 2
+                position += 3
+                continue
             elif char == "`" or header.startswith("$(", position):
                 header_substitution = True
             elif char == "#" and (
@@ -269,6 +281,18 @@ def shell_tokens(command):
 def commit_directories(command, base):
     """Resolve literal cd/Git options; never execute the submitted shell command."""
     tokens = shell_tokens(command)
+    at_head = True
+    for word, operator in tokens:
+        if operator:
+            at_head = True
+        elif at_head:
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", word):
+                continue
+            if getattr(word, "expanded", False):
+                raise ValueError("expanded executable cannot establish a commit target")
+            if word in ("env", "exec", "command", "builtin") or word.startswith("-"):
+                continue
+            at_head = False
     if (
         any(git_executable(word) for word, operator in tokens if not operator)
         and any(word == "commit" for word, operator in tokens if not operator)
@@ -321,6 +345,18 @@ def commit_directories(command, base):
     for args, conditional in segments:
         if not args:
             continue
+        assignment_count = 0
+        while assignment_count < len(args) and re.match(
+            r"^[A-Za-z_][A-Za-z0-9_]*=", args[assignment_count]
+        ):
+            assignment_count += 1
+        assigned_args = args[assignment_count:]
+        if assignment_count and assigned_args:
+            if assigned_args[0] in ("cd", "pushd", "popd") or (
+                assigned_args[0] in ("builtin", "command")
+                and any(word in ("cd", "pushd", "popd") for word in assigned_args[1:])
+            ):
+                uncertain_cwd = True
         if args[0].startswith("CDPATH=") or (
             args[0] in ("builtin", "command")
             and any(word in ("cd", "pushd", "popd") for word in args[1:])
@@ -363,10 +399,18 @@ def commit_directories(command, base):
         position = 1
         while position < len(args):
             flag = args[position]
+            if getattr(flag, "expanded", False):
+                raise ValueError(
+                    "expanded Git subcommand or global option cannot be inspected"
+                )
             if flag in ("-C", "-c", "--git-dir", "--work-tree"):
                 if position + 1 >= len(args):
                     raise ValueError("Git option requires a value")
                 value = args[position + 1]
+                if getattr(value, "expanded", False):
+                    raise ValueError(
+                        "expanded Git global option value cannot be inspected"
+                    )
                 if flag == "-C":
                     if any(char in value for char in "$`~"):
                         raise ValueError(
