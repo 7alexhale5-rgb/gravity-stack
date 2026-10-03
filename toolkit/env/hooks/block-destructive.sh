@@ -277,7 +277,7 @@ def shell_tokens(command):
             if quote == chr(34) and char in "$`":
                 marked.append(expansion_marker)
             if quote == chr(34) and (
-                char == "`" or normalized.startswith("$(", position)
+                char == "`" or (normalized.startswith("$(", position) and not normalized.startswith("$((", position))
             ):
                 substitution = True
             if char == quote:
@@ -285,17 +285,14 @@ def shell_tokens(command):
         elif char in (chr(39), chr(34)):
             quote = char
             marked.append(marker)
-        elif char == "`" or normalized.startswith("$(", position):
+        elif char == "`" or (normalized.startswith("$(", position) and not normalized.startswith("$((", position)):
             substitution = True
             marked.append(expansion_marker)
         elif char in "$*?[{~":
             marked.append(expansion_marker)
         marked.append(char)
-    if substitution and re.search(
-        r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\b(?:push|commit)\b",
-        shell_continuations(command),
-    ):
-        raise ValueError("Git command substitution cannot be inspected")
+    if substitution:
+        raise ValueError("executable shell substitution cannot be inspected")
     lexer = shlex.shlex("".join(marked), posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True

@@ -21,6 +21,12 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_quoted_git_inside_executable_backticks_refuses(self):
+        self.assertEqual(self.decision('echo `"git" push --force origin main`'), "deny")
+        self.assertEqual(
+            self.decision(r'echo \`"git" push --force origin main\`'), "allow"
+        )
+
     def test_leading_redirections_cannot_hide_shell_programs(self):
         for command in (
             ">/dev/null bash -c 'git push --force origin main'",
@@ -398,6 +404,43 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_quoted_git_inside_executable_backticks_refuses(self):
+        for hook in COMMIT_HOOKS:
+            self.assertEqual(self.run_hook(hook, 'echo `"git" commit -am x`'), (2, 0))
+            self.assertEqual(
+                self.run_hook(hook, r'echo \`"git" commit -am x\`'), (0, 0)
+            )
+
+    def test_glob_cd_does_not_compile_literal_pattern_directory(self):
+        for hook in COMMIT_HOOKS:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                for name in ("[ab]", "a"):
+                    directory = root / name
+                    directory.mkdir()
+                    (directory / "tsconfig.json").write_text("{}")
+                for command, expected_calls in (
+                    ("cd [ab] && git commit -am x", 0),
+                    ("cd '[ab]' && git commit -am x", 1),
+                ):
+                    payload = {"cwd": str(root), "tool_input": {"command": command}}
+                    with (
+                        mock.patch.object(
+                            sys, "stdin", io.StringIO(json.dumps(payload))
+                        ),
+                        mock.patch(
+                            "subprocess.run",
+                            return_value=subprocess.CompletedProcess(
+                                [], 1, "failure", ""
+                            ),
+                        ) as compiler,
+                        mock.patch.object(sys, "stderr", io.StringIO()),
+                    ):
+                        with self.assertRaises(SystemExit) as result:
+                            runpy.run_path(str(hook), run_name="__main__")
+                    self.assertEqual(result.exception.code, 2)
+                    self.assertEqual(compiler.call_count, expected_calls)
+
     def test_prefixed_commits_and_redirected_shells_refuse(self):
         for hook in COMMIT_HOOKS:
             for command in (
