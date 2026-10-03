@@ -496,6 +496,64 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_actual_supplied_wrappers_and_arithmetic_contexts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            log = root / "calls"
+            fake = root / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for operation in ("commit -am broken", "push --force origin main"):
+                arithmetic = "expression='a[$(git " + operation + "; printf 0)]'; "
+                commands = [
+                    "printf '%s\\n' 'git " + operation + "' | xargs " + child
+                    for child in ("env", "env env", "nice env")
+                ]
+                commands += [
+                    arithmetic + tail
+                    for tail in (
+                        "[[ expression -eq 0 ]]",
+                        "declare -i number=expression",
+                        "typeset -i number=expression",
+                        "declare -i number; number=expression",
+                        "declare -i number=0; number+=expression",
+                        "arr[expression]=1",
+                        'echo "${arr[expression]}"',
+                        "declare -a 'arr[expression]=1'",
+                    )
+                ]
+                for command in commands:
+                    log.write_text("")
+                    subprocess.run(
+                        ["bash", "-c", command], env=env, capture_output=True, timeout=3
+                    )
+                    self.assertIn(operation, log.read_text(), command)
+                    with self.subTest(command=command):
+                        if operation.startswith("commit"):
+                            for hook in COMMIT_HOOKS:
+                                self.assertEqual(self.run_hook(hook, command), (2, 0))
+                        else:
+                            self.assertEqual(
+                                DestructiveHookTests().decision(command), "deny"
+                            )
+        for command in (
+            "printf '%s\\n' 'git commit -am printed' | xargs echo",
+            "[[ 1+2 -eq 3 ]]",
+            "declare -i number=1+2",
+            "declare -i number; number=2+3",
+            "arr[0]=1",
+            'echo "${arr[0]}"',
+            "printf '%s' '[[ expression -eq 0 ]]'",
+        ):
+            for hook in COMMIT_HOOKS:
+                self.assertEqual(self.run_hook(hook, command), (0, 0))
+            self.assertEqual(DestructiveHookTests().decision(command), "allow")
+
     def test_actual_xargs_git_inputs_and_indirect_arithmetic_are_guarded(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -2333,6 +2391,10 @@ class CommitGateTests(unittest.TestCase):
             )
             tokenizers.append(namespace["shell_tokens"])
         for command in (
+            "printf '%s\\n' 'git push --force origin main' | xargs env",
+            "expression='a[$(git commit -am broken; printf 0)]'; [[ expression -eq 0 ]]",
+            "declare -i number; number+=expression",
+            'echo "${arr[expression]}"',
             "printf '%s\\n' 'commit -am broken' | xargs git",
             "xargs git <<'INPUT'\npush --force origin main\nINPUT",
             "expression='a[$(git push --force origin main; printf 0)]'; echo $((expression))",

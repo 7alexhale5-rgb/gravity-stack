@@ -108,6 +108,14 @@ def shell_tokens(command):
                     quote = ""
                 position += 1
                 continue
+            if text.startswith("${", position):
+                end = text.find("}", position + 2)
+                reference = text[position + 2 : end] if end >= 0 else ""
+                indexed = re.match(r"^[A-Za-z_][A-Za-z0-9_]*\[(.*)\]", reference)
+                if indexed and not literal_arithmetic(indexed.group(1)):
+                    raise ValueError(
+                        "unresolved arithmetic array reference cannot be inspected"
+                    )
             bare_arithmetic = not quote and text.startswith("((", position)
             if text.startswith("$((", position) or bare_arithmetic:
                 # Arithmetic quotes do not prevent command substitution. Inspect
@@ -224,6 +232,7 @@ def shell_tokens(command):
         redirection_operand = False
         wrapper = ""
         wrapper_operand = False
+        integer_names = set()
         index = 0
         while index < len(words):
             raw = words[index]
@@ -254,7 +263,34 @@ def shell_tokens(command):
                     return True
                 wrapper_operand = False
                 continue
-            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", word):
+            indexed_assignment = re.match(
+                r"^([A-Za-z_][A-Za-z0-9_]*)\[(.*)\](?:\+?=)", word
+            )
+            if indexed_assignment and not literal_arithmetic(
+                indexed_assignment.group(2)
+            ):
+                raise ValueError(
+                    "unresolved arithmetic array assignment cannot be inspected"
+                )
+            if indexed_assignment:
+                if indexed_assignment.group(
+                    1
+                ) in integer_names and not literal_arithmetic(
+                    word[indexed_assignment.end() :]
+                ):
+                    raise ValueError(
+                        "unresolved integer array value cannot be inspected"
+                    )
+                continue
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\+?=", word):
+                variable, value = word.split("=", 1)
+                variable = variable.rstrip("+")
+                if variable in integer_names and (
+                    expanded or not literal_arithmetic(value)
+                ):
+                    raise ValueError(
+                        "unresolved integer variable assignment cannot be inspected"
+                    )
                 # Literal array contents are data; executable substitutions were
                 # already inspected recursively before this token walk.
                 if index < len(words) and words[index] == "(":
@@ -277,6 +313,77 @@ def shell_tokens(command):
             if expanded:
                 return True
             name = word if word == "." else Path(word).name
+            if name == "[[":
+                end = index
+                while end < len(words) and words[end].replace("\ue003", "") != "]]":
+                    end += 1
+                if end == len(words):
+                    raise ValueError("unterminated conditional cannot be inspected")
+                operands = words[index:end]
+                for offset, operand in enumerate(operands):
+                    if operand.replace("\ue003", "") in {
+                        "-eq",
+                        "-ne",
+                        "-lt",
+                        "-le",
+                        "-gt",
+                        "-ge",
+                    }:
+                        if (
+                            offset == 0
+                            or offset + 1 == len(operands)
+                            or any(
+                                "\ue002" in value
+                                or not literal_arithmetic(value.replace("\ue003", ""))
+                                for value in (
+                                    operands[offset - 1],
+                                    operands[offset + 1],
+                                )
+                            )
+                        ):
+                            raise ValueError(
+                                "unresolved conditional arithmetic cannot be inspected"
+                            )
+                index = end + 1
+                head = False
+                continue
+            if name in {"declare", "typeset", "local", "export", "readonly", "unset"}:
+                end = index
+                while end < len(words) and not (
+                    words[end] and all(c in ";&|()<>\n" for c in words[end])
+                ):
+                    end += 1
+                arguments = [value.replace("\ue003", "") for value in words[index:end]]
+                integer = any(
+                    value.startswith("-") and "i" in value for value in arguments
+                )
+                if any(value.startswith("-") and "n" in value for value in arguments):
+                    raise ValueError(
+                        "indirect variable declaration cannot be inspected"
+                    )
+                for argument in arguments:
+                    if argument.startswith("-") or argument == "--":
+                        continue
+                    indexed = re.match(
+                        r"^(?:[A-Za-z_][A-Za-z0-9_]*)?\[(.*)\](?:\+?=.*)?$", argument
+                    )
+                    if indexed and not literal_arithmetic(indexed.group(1)):
+                        raise ValueError(
+                            "unresolved builtin arithmetic array index cannot be inspected"
+                        )
+                    if integer:
+                        variable, separator, value = argument.partition("=")
+                        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", variable) or (
+                            separator
+                            and ("\ue002" in value or not literal_arithmetic(value))
+                        ):
+                            raise ValueError(
+                                "unresolved integer declaration cannot be inspected"
+                            )
+                        integer_names.add(variable)
+                index = end
+                head = False
+                continue
             if name in {
                 "if",
                 "then",
@@ -423,6 +530,18 @@ def shell_tokens(command):
                     head = False
                     continue
                 if name == "xargs":
+                    executable = (
+                        words[child].replace("\ue003", "")
+                        if child < len(words)
+                        else "echo"
+                    )
+                    if "\ue002" in executable or Path(executable).name not in {
+                        "echo",
+                        "printf",
+                    }:
+                        raise ValueError(
+                            "xargs supplied execution is not proven inert printing"
+                        )
                     replacements = []
                     for offset, raw_option in enumerate(words[index:child]):
                         option = raw_option.replace("\ue003", "")
