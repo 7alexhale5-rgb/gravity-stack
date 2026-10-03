@@ -45,30 +45,11 @@ sys.exit(2 if any(p in path for p in GUARDED) else 0)`,
     event: "PreToolUse",
     matcher: "Bash",
     description: "Blocks git commits in TypeScript projects if tsc --noEmit fails.",
-    why: "Zero TypeScript errors reach your git history. Every commit is type-safe. This is the single highest-ROI hook in the stack.",
-    code: `#!/usr/bin/env python3
-import json, sys, subprocess, os
-
-data = json.load(sys.stdin)
-cmd = data.get('tool_input', {}).get('command', '')
-
-if 'git commit' not in cmd:
-    sys.exit(0)
-
-if not (os.path.exists('tsconfig.json') or os.path.exists('package.json')):
-    sys.exit(0)
-
-if os.path.exists('tsconfig.json'):
-    result = subprocess.run(
-        ['npx', 'tsc', '--noEmit'],
-        capture_output=True, text=True, timeout=60
-    )
-    if result.returncode != 0:
-        print(f"COMMIT BLOCKED: TypeScript errors found:\\n{result.stderr[:1000]}")
-        sys.exit(2)
-
-sys.exit(0)`,
-    language: "python",
+    why: "Checks the applicable TypeScript project before a literal commit. Ambiguous shell commands and multiple commit targets are refused. Live hook firing still needs a separate check.",
+    code: `# Install the reviewed toolkit/configs/commit-gate.py first.
+# Register this command as PreToolUse/Bash with timeout: 70.
+python3 "$HOME/.claude/hooks/commit-gate.py"`,
+    language: "bash",
   },
   {
     name: "Auto-Lint",
