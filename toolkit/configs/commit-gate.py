@@ -213,12 +213,11 @@ def shell_tokens(command):
                 "do",
                 "done",
                 "!",
-                "time",
                 "{",
                 "}",
             }:
                 continue
-            if name in {"env", "exec", "command", "builtin"}:
+            if name in {"env", "exec", "command", "builtin", "time"}:
                 wrapper = name
                 continue
             if wrapper and word.startswith("-"):
@@ -810,6 +809,17 @@ def commit_directories(command, base):
         if args[0] in ("pushd", "popd", "eval", "source", ".", "export"):
             uncertain_cwd = True
         if not git_executable(args[0]):
+            # Expanded preambles can assign shell variables (${NAME:=value})
+            # even when their executable only prints. Unknown expansions run
+            # separately so directory and Git environment state remain bound.
+            if any(getattr(word, "expanded", False) for word in args):
+                uncertain_cwd = True
+            if effective_args and effective_args[0] == "printf":
+                format_args = effective_args[1:]
+                if format_args and format_args[0] == "--":
+                    format_args = format_args[1:]
+                if format_args and re.search(r"%(?:[0-9]+\$)?[-+ #0]*(?:[0-9]+|\*)?(?:\.(?:[0-9]+|\*))?n", format_args[0].replace("%%", "")):
+                    uncertain_cwd = True
             # A preceding program could alter Git configuration between this
             # read-only query and the later commit. Keep uncertain programs in
             # separate hook invocations; unrelated commands without commits are
@@ -955,7 +965,7 @@ def commit_directories(command, base):
         remaining = query_deadline - time.monotonic()
         if remaining <= 0:
             raise ValueError("Git inspection budget exhausted")
-        process = subprocess.Popen(query, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = subprocess.Popen(query, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             stdout, stderr = process.communicate(timeout=remaining)
         except subprocess.TimeoutExpired:
@@ -965,11 +975,11 @@ def commit_directories(command, base):
         return process.returncode, stdout, stderr
     for (prefix, pattern), keys in readonly_contexts.items():
         code, output, error = git_probe(list(prefix) + ["config", "--null", "--get-regexp", pattern])
-        if code == 1 or code == 128 and error.startswith("fatal: not a git repository"):
+        if code == 1 or code == 128 and error.startswith(b"fatal: not a git repository"):
             continue
         if code != 0:
             raise ValueError("prior Git configured execution cannot be established")
-        for entry in output.rstrip("\0").split("\0"):
+        for entry in os.fsdecode(output).rstrip("\0").split("\0"):
             key, separator, value = entry.partition("\n")
             if not separator or key not in keys or value.strip().lower() not in ("false", "0", "no", "off"):
                 raise ValueError("prior Git configured execution requires a separate invocation")
@@ -979,13 +989,13 @@ def commit_directories(command, base):
         if code:
             # Git discovery itself, rather than a missing .git child, establishes
             # a nonrepository. Other failures remain an explicit refusal.
-            if code == 128 and not stdout and stderr.startswith("fatal: not a git repository"):
+            if code == 128 and not stdout and stderr.startswith(b"fatal: not a git repository"):
                 resolved_targets.append((target, explicit))
                 continue
             raise ValueError("actual Git worktree cannot be established")
-        if not stdout.endswith("\n") or stdout.count("\n") != 1 or not stdout[:-1]:
+        if not stdout.endswith(b"\n") or stdout.count(b"\n") != 1 or not stdout[:-1]:
             raise ValueError("actual Git worktree output is ambiguous")
-        actual = Path(stdout[:-1]).resolve(strict=True)
+        actual = Path(os.fsdecode(stdout[:-1])).resolve(strict=True)
         if not actual.is_dir():
             raise ValueError("actual Git worktree is not a directory")
         # Preserve package/subdirectory selection within the verified worktree.

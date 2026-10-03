@@ -232,12 +232,11 @@ def shell_tokens(command):
                 "do",
                 "done",
                 "!",
-                "time",
                 "{",
                 "}",
             }:
                 continue
-            if name in {"env", "exec", "command", "builtin"}:
+            if name in {"env", "exec", "command", "builtin", "time"}:
                 wrapper = name
                 continue
             if wrapper and word.startswith("-"):

@@ -495,6 +495,122 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_timed_options_and_unknown_prefixes_cannot_skip_guards(self):
+        destructive = DestructiveHookTests()
+        for prefix in ("time -p", "time --unknown", "command time -p", "$PREFIX"):
+            for hook in COMMIT_HOOKS:
+                with self.subTest(prefix=prefix, hook=hook):
+                    self.assertEqual(
+                        self.run_hook(hook, prefix + " git commit -am broken"), (2, 0)
+                    )
+            self.assertEqual(
+                destructive.decision(prefix + " git push --force origin main"), "deny"
+            )
+        self.assertEqual(
+            destructive.decision("time -p echo 'git push --force origin main'"), "allow"
+        )
+
+    def test_expanded_printing_preambles_cannot_change_commit_target(self):
+        import shlex
+
+        for hook in COMMIT_HOOKS:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                clean, broken = root / "target", root / "other" / "target"
+                for repo in (clean, broken):
+                    repo.mkdir(parents=True)
+                    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+                    (repo / "tsconfig.json").write_text("{}")
+                for preamble in (
+                    'echo "${CDPATH:=' + str(broken.parent) + '}"',
+                    'echo "${PWD=' + str(broken.parent) + '}"',
+                    'printf "%s" "${CDPATH:=' + str(broken.parent) + '}"',
+                    'printf "%n" CDPATH',
+                    'builtin printf "%s%n" hello CDPATH',
+                ):
+                    payload = {
+                        "cwd": str(root),
+                        "tool_input": {
+                            "command": preamble + "; cd target; git commit -am broken"
+                        },
+                    }
+                    with (
+                        self.subTest(hook=hook, preamble=preamble),
+                        mock.patch.object(
+                            sys, "stdin", io.StringIO(json.dumps(payload))
+                        ),
+                        mock.patch(
+                            "subprocess.run",
+                            side_effect=lambda *a, **kw: subprocess.CompletedProcess(
+                                [], 0 if Path(kw["cwd"]) == clean else 1, "fixture", ""
+                            ),
+                        ) as compiler,
+                        mock.patch.dict(os.environ, {"CDPATH": ""}),
+                        mock.patch.object(sys, "stderr", io.StringIO()),
+                    ):
+                        with self.assertRaises(SystemExit) as stopped:
+                            runpy.run_path(str(hook), run_name="__main__")
+                    self.assertEqual(stopped.exception.code, 2)
+                    compiler.assert_not_called()
+                for preamble in (
+                    "echo '${CDPATH:=other}'",
+                    r'echo "\${CDPATH:=other}"',
+                    "printf '%s' '%n'",
+                ):
+                    payload = {
+                        "cwd": str(root),
+                        "tool_input": {
+                            "command": preamble + "; cd target; git commit -am safe"
+                        },
+                    }
+                    with (
+                        mock.patch.object(
+                            sys, "stdin", io.StringIO(json.dumps(payload))
+                        ),
+                        mock.patch(
+                            "subprocess.run",
+                            return_value=subprocess.CompletedProcess([], 0, "", ""),
+                        ) as compiler,
+                        mock.patch.dict(os.environ, {"CDPATH": ""}),
+                    ):
+                        with self.assertRaises(SystemExit) as stopped:
+                            runpy.run_path(str(hook), run_name="__main__")
+                    self.assertEqual(stopped.exception.code, 0)
+                    self.assertEqual(compiler.call_args.kwargs["cwd"], str(clean))
+
+    def test_carriage_return_worktree_path_is_not_normalized(self):
+        for hook in COMMIT_HOOKS:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                clean, broken = root / "project", root / "project\r"
+                for repo in (clean, broken):
+                    repo.mkdir()
+                    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+                    (repo / "tsconfig.json").write_text("{}")
+                payload = {
+                    "cwd": str(broken),
+                    "tool_input": {"command": "git commit -am broken"},
+                }
+                with (
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch(
+                        "subprocess.run",
+                        side_effect=lambda *a, **kw: subprocess.CompletedProcess(
+                            [], 0 if Path(kw["cwd"]) == clean else 1, "fixture", ""
+                        ),
+                    ) as compiler,
+                    mock.patch.object(sys, "stderr", io.StringIO()),
+                ):
+                    with self.assertRaises(SystemExit) as stopped:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(stopped.exception.code, 2)
+                self.assertTrue(
+                    all(
+                        call.kwargs["cwd"] == str(broken)
+                        for call in compiler.call_args_list
+                    )
+                )
+
     def test_prior_git_configured_execution_is_refused_or_disabled(self):
         for hook in COMMIT_HOOKS:
             for key, prefix, accepted in (
@@ -1614,6 +1730,14 @@ class CommitGateTests(unittest.TestCase):
             tokenizers.append(namespace["shell_tokens"])
         for command in (
             "git status &&\ncd docs; git commit -m test",
+            "time -p git commit -am broken",
+            "time -p git push --force origin main",
+            "command time -p git commit -am broken",
+            "time --unknown git push --force origin main",
+            "time -p echo 'git push --force origin main'",
+            'echo "${CDPATH:=other}"; cd target; git commit -am broken',
+            "echo '${CDPATH:=other}'; git commit -am safe",
+            'printf "%n" CDPATH; git commit -am broken',
             'echo "$(date)"',
             "if test -f package.json; then npm test; fi",
             'echo "$(printf "$(git commit -am x)")"',
