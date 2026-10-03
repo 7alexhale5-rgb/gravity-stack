@@ -145,9 +145,10 @@ def shell_tokens(command):
                 position == 0 or header[position - 1] in " \t\r\n;&|()<>"
             ):
                 break
-            elif header.startswith("<<", position) and not header.startswith(
-                "<<<", position
-            ):
+            elif header.startswith("<<<", position):
+                position += 3
+                continue
+            elif header.startswith("<<", position):
                 match = re.match(
                     r"<<(-?)\s*([\x27][^\x27]*[\x27]|[\x22][^\x22]*[\x22]|[A-Za-z0-9_]+)(?=\s|[;&|<>]|$)",
                     header[position:],
@@ -208,8 +209,16 @@ def shell_tokens(command):
                 "heredoc combined with executable shell cannot be inspected"
             )
     marker = "\ue000"
-    if marker in command:
+    expansion_marker = "\ue001"
+    if marker in command or expansion_marker in command:
         raise ValueError("reserved shell marker")
+
+    class ShellWord(str):
+        def __new__(cls, value, expanded):
+            word = str.__new__(cls, value)
+            word.expanded = expanded
+            return word
+
     marked = []
     quote = ""
     escaped = False
@@ -223,6 +232,8 @@ def shell_tokens(command):
                 marked.append(marker)
             escaped = True
         elif quote:
+            if quote == chr(34) and char in "$`":
+                marked.append(expansion_marker)
             if quote == chr(34) and (
                 char == "`" or normalized.startswith("$(", position)
             ):
@@ -234,6 +245,9 @@ def shell_tokens(command):
             marked.append(marker)
         elif char == "`" or normalized.startswith("$(", position):
             substitution = True
+            marked.append(expansion_marker)
+        elif char in "$*?[{~":
+            marked.append(expansion_marker)
         marked.append(char)
     if substitution and re.search(
         r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\b(?:push|commit)\b",
@@ -245,7 +259,13 @@ def shell_tokens(command):
     lexer.whitespace_split = True
     lexer.commenters = ""
     tokens = [
-        (word.replace(marker, ""), bool(word) and all(c in ";&|()<>\n" for c in word))
+        (
+            ShellWord(
+                word.replace(marker, "").replace(expansion_marker, ""),
+                expansion_marker in word,
+            ),
+            bool(word) and all(c in ";&|()<>\n" for c in word),
+        )
         for word in lexer
     ]
     # Only executable wrapper arguments and pipeline inputs are shell programs;
@@ -305,6 +325,8 @@ for index, (word, operator) in enumerate(tokens):
     inline_config = False
     while pos < len(args):
         flag = args[pos]
+        if getattr(flag, "expanded", False):
+            deny("expanded Git command or options cannot be inspected")
         if flag in ("-c", "-C", "--git-dir", "--work-tree", "--config-env", "--namespace"):
             inline_config |= flag in ("-c", "--config-env")
             pos += 2
@@ -319,6 +341,8 @@ for index, (word, operator) in enumerate(tokens):
             break
     if pos >= len(args) or args[pos] != "push":
         continue
+    if any(getattr(arg, "expanded", False) for arg in args):
+        deny("expanded push arguments cannot be inspected")
     if inline_config:
         deny("inline Git configuration can change push effects; use a literal push")
     push_args = args[pos + 1:]

@@ -21,6 +21,32 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_push_expansions_refuse_but_literal_dollar_refs_remain_data(self):
+        for command in (
+            "PUSH_FLAGS=--force; git push origin $PUSH_FLAGS main",
+            'git push origin "$PUSH_FLAGS" main',
+            "git $SUBCOMMAND origin main",
+            "git push origin feature:*",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+        for command in ("git push origin '$literal'", r"git push origin \$literal"):
+            self.assertEqual(self.decision(command), "allow")
+
+    def test_here_strings_preserve_data_and_refuse_executable_substitutions(self):
+        for command in (
+            'cat <<< "hello"',
+            "cat <<< 'git push'",
+            'cat <<< "hello"; git status',
+        ):
+            self.assertEqual(self.decision(command), "allow")
+        for command in (
+            'cat <<< "$(git push --force origin main)"',
+            "bash <<< 'git push --force origin main'",
+            'cat <<< "hello"; git push --force origin main',
+        ):
+            self.assertEqual(self.decision(command), "deny")
+
     def test_quoted_git_push_patterns_and_literal_heredocs_are_data(self):
         for command in (
             "rg 'git push' docs/",
@@ -313,6 +339,56 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_wrapped_cd_and_cdpath_cannot_change_unchecked_worktree(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "builtin cd /tmp; git commit -m x",
+                "command cd /tmp; git commit -m x",
+                "CDPATH=/tmp; cd .; git commit -m x",
+            ):
+                self.assertEqual(self.run_hook(hook, command), (2, 0))
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "docs").mkdir()
+                payload = {
+                    "cwd": str(root),
+                    "tool_input": {"command": "cd docs && git commit -m x"},
+                }
+                with (
+                    mock.patch.dict(os.environ, {"CDPATH": "/tmp"}),
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch("subprocess.run") as compiler,
+                    mock.patch.object(sys, "stderr", io.StringIO()),
+                ):
+                    with self.assertRaises(SystemExit) as exit:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(exit.exception.code, 2)
+                compiler.assert_not_called()
+
+    def test_included_git_configuration_refuses_even_explicit_worktree(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "git -c include.path=/tmp/worktree.conf commit -m x",
+                "git -cinclude.path=/tmp/worktree.conf --work-tree=. commit -m x",
+                "git -c core.worktree=site --work-tree=. commit -m x",
+            ):
+                self.assertEqual(self.run_hook(hook, command), (2, 0))
+
+    def test_here_strings_are_data_unless_they_execute_git(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                'cat <<< "hello"',
+                "cat <<< 'git commit'",
+                'cat <<< "hello"; git status',
+            ):
+                self.assertEqual(self.run_hook(hook, command), (0, 0))
+            for command in (
+                'cat <<< "$(git commit -m x)"',
+                "bash <<< 'git commit -m x'",
+                'cat <<< "hello"; git commit -m x',
+            ):
+                self.assertEqual(self.run_hook(hook, command), (2, 0))
+
     def test_quoted_git_commit_patterns_and_literal_heredocs_are_data(self):
         for hook in COMMIT_HOOKS:
             for command in (
@@ -628,6 +704,11 @@ class CommitGateTests(unittest.TestCase):
             tokenizers.append(namespace["shell_tokens"])
         for command in (
             "git status &&\ncd docs; git commit -m test",
+            'cat <<< "hello"',
+            "cat <<< 'git push'",
+            'cat <<< "$(git commit -m x)"',
+            'git push origin "$PUSH_FLAGS" main',
+            "git push origin '$literal'",
             "git push origin main >push.log --force",
             "git push origin main 2>&1 --force",
             "git -C ';' status",
@@ -650,6 +731,13 @@ class CommitGateTests(unittest.TestCase):
                         outputs.append(("error", str(error)))
                 self.assertEqual(outputs[0], outputs[1])
                 self.assertEqual(outputs[0], outputs[2])
+                if outputs[0][0] != "error":
+                    expansion_flags = [
+                        [getattr(word, "expanded", False) for word, _ in output]
+                        for output in outputs
+                    ]
+                    self.assertEqual(expansion_flags[0], expansion_flags[1])
+                    self.assertEqual(expansion_flags[0], expansion_flags[2])
                 if command.startswith("echo 'literal") or command.startswith(
                     r"echo \`"
                 ):

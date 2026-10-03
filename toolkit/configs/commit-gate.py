@@ -125,9 +125,10 @@ def shell_tokens(command):
                 position == 0 or header[position - 1] in " \t\r\n;&|()<>"
             ):
                 break
-            elif header.startswith("<<", position) and not header.startswith(
-                "<<<", position
-            ):
+            elif header.startswith("<<<", position):
+                position += 3
+                continue
+            elif header.startswith("<<", position):
                 match = re.match(
                     r"<<(-?)\s*([\x27][^\x27]*[\x27]|[\x22][^\x22]*[\x22]|[A-Za-z0-9_]+)(?=\s|[;&|<>]|$)",
                     header[position:],
@@ -188,8 +189,16 @@ def shell_tokens(command):
                 "heredoc combined with executable shell cannot be inspected"
             )
     marker = "\ue000"
-    if marker in command:
+    expansion_marker = "\ue001"
+    if marker in command or expansion_marker in command:
         raise ValueError("reserved shell marker")
+
+    class ShellWord(str):
+        def __new__(cls, value, expanded):
+            word = str.__new__(cls, value)
+            word.expanded = expanded
+            return word
+
     marked = []
     quote = ""
     escaped = False
@@ -203,6 +212,8 @@ def shell_tokens(command):
                 marked.append(marker)
             escaped = True
         elif quote:
+            if quote == chr(34) and char in "$`":
+                marked.append(expansion_marker)
             if quote == chr(34) and (
                 char == "`" or normalized.startswith("$(", position)
             ):
@@ -214,6 +225,9 @@ def shell_tokens(command):
             marked.append(marker)
         elif char == "`" or normalized.startswith("$(", position):
             substitution = True
+            marked.append(expansion_marker)
+        elif char in "$*?[{~":
+            marked.append(expansion_marker)
         marked.append(char)
     if substitution and re.search(
         r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\b(?:push|commit)\b",
@@ -225,7 +239,13 @@ def shell_tokens(command):
     lexer.whitespace_split = True
     lexer.commenters = ""
     tokens = [
-        (word.replace(marker, ""), bool(word) and all(c in ";&|()<>\n" for c in word))
+        (
+            ShellWord(
+                word.replace(marker, "").replace(expansion_marker, ""),
+                expansion_marker in word,
+            ),
+            bool(word) and all(c in ";&|()<>\n" for c in word),
+        )
         for word in lexer
     ]
     # Only executable wrapper arguments and pipeline inputs are shell programs;
@@ -301,12 +321,22 @@ def commit_directories(command, base):
     for args, conditional in segments:
         if not args:
             continue
+        if args[0].startswith("CDPATH=") or (
+            args[0] in ("builtin", "command")
+            and any(word in ("cd", "pushd", "popd") for word in args[1:])
+        ):
+            uncertain_cwd = True
         if args[0] == "cd":
             if (
                 conditional
                 or len(args) != 2
                 or args[1].startswith("-")
                 or any(c in args[1] for c in "$`~")
+                or (
+                    os.environ.get("CDPATH")
+                    and not Path(args[1]).is_absolute()
+                    and args[1].split("/", 1)[0] not in (".", "..")
+                )
             ):
                 uncertain_cwd = True
             else:
@@ -347,8 +377,8 @@ def commit_directories(command, base):
                     worktree = value
                 elif flag == "--git-dir":
                     gitdir = True
-                elif flag == "-c" and value.lower().startswith("core.worktree="):
-                    config_worktree = True
+                elif flag == "-c":
+                    config_worktree |= not value.lower().startswith("core.commentchar=")
                 position += 2
             elif flag.startswith("-C") and len(flag) > 2:
                 if any(char in flag[2:] for char in "$`~"):
@@ -362,7 +392,7 @@ def commit_directories(command, base):
                 gitdir = True
                 position += 1
             elif flag.startswith("-c") and len(flag) > 2:
-                config_worktree |= flag[2:].lower().startswith("core.worktree=")
+                config_worktree |= not flag[2:].lower().startswith("core.commentchar=")
                 position += 1
             elif flag in (
                 "--no-pager",
@@ -380,7 +410,9 @@ def commit_directories(command, base):
                     )
                 break
         if position < len(args) and args[position] == "commit":
-            if (gitdir or config_worktree) and worktree is None:
+            if config_worktree:
+                raise ValueError("inline Git configuration effects cannot be inspected")
+            if gitdir and worktree is None:
                 raise ValueError(
                     "explicit --work-tree required with alternate Git directory configuration"
                 )
