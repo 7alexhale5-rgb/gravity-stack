@@ -21,6 +21,31 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_quoted_git_push_patterns_and_literal_heredocs_are_data(self):
+        for command in (
+            "rg 'git push' docs/",
+            "rg '|' bash 'git push' docs/",
+            "printf '%s' 'git push --force origin main'",
+            "cat <<'EOF'\nDon't forget git push --force origin main\nEOF",
+            "cat <<EOF\nDon't forget\nEOF",
+            "cat <<-'EOF'\n\tDon't forget\n\tEOF",
+            "cat <<'EOF' # note <<FAKE\nDon't forget\nEOF",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "allow")
+        for command in (
+            "cat <<'EOF'\nDon't forget\nEOF\ngit push --force origin main",
+            "bash <<'EOF'\ngit push --force origin main\nEOF",
+            "cat <<'EOF' | bash\ngit push --force origin main\nEOF",
+            "cat <<EOF\n$(git push --force origin main)\nEOF",
+            "env -i bash <<'EOF'\ngit push --force origin main\nEOF",
+            'echo "$(git push --force origin main)"',
+            "$(cat <<'EOF'\ngit\nEOF\n) push --force origin main",
+            "cat <<'EOF' >script.sh\ngit push --force origin main\nEOF\nbash script.sh",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+
     def test_git_environment_configuration_cannot_hide_mirror_push(self):
         for command in (
             "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.mirror GIT_CONFIG_VALUE_0=true git push origin",
@@ -288,6 +313,69 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_quoted_git_commit_patterns_and_literal_heredocs_are_data(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "rg 'git commit' docs/",
+                "printf '%s' 'git commit -m x'",
+                "cat <<'EOF'\nDon't forget git commit -m x\nEOF",
+                "cat <<EOF\nDon't forget\nEOF",
+                "cat <<'A' <<'B'\nDon't forget\nA\ngit commit\nB",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+            for command in (
+                "cat <<'EOF'\nDon't forget\nEOF\ngit commit -m x",
+                "bash <<'EOF'\ngit commit -m x\nEOF",
+                "cat <<'EOF' | bash\ngit commit -m x\nEOF",
+                "cat <<EOF\n$(git commit -m x)\nEOF",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (2, 0))
+
+    def test_raw_git_c_expansions_are_rejected_before_normalization(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                'git -C "$DEST/.." commit -m test',
+                'git -C"$DEST/.." commit -m test',
+                "git -C '$DEST/..' commit -m test",
+                "git -C '~/..' commit -m test",
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (2, 0))
+
+    def test_failed_cd_and_inherited_git_environment_are_not_trusted(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "cd missing; cd ..; git commit -m test",
+                "git commit -m test",
+            ):
+                with (
+                    self.subTest(hook=hook, command=command),
+                    tempfile.TemporaryDirectory() as td,
+                ):
+                    root = Path(td)
+                    (root / ".git").mkdir()
+                    (root / "tsconfig.json").write_text("{}")
+                    nested = root / "nested"
+                    nested.mkdir()
+                    (nested / ".git").mkdir()
+                    payload = {"cwd": str(nested), "tool_input": {"command": command}}
+                    config = (
+                        {"GIT_DIR": str(root / ".git"), "GIT_WORK_TREE": str(root)}
+                        if command == "git commit -m test"
+                        else {}
+                    )
+                    with (
+                        mock.patch.dict(os.environ, config),
+                        mock.patch("sys.stdin", io.StringIO(json.dumps(payload))),
+                        mock.patch("subprocess.run") as run,
+                    ):
+                        with self.assertRaises(SystemExit) as exit_result:
+                            runpy.run_path(str(hook), run_name="__main__")
+                        self.assertEqual(exit_result.exception.code, 2)
+                        run.assert_not_called()
+
     def test_git_redirection_before_commit_cannot_skip_compilation(self):
         for hook in COMMIT_HOOKS:
             for command in (
@@ -761,6 +849,75 @@ class CommitGateTests(unittest.TestCase):
 
 
 class GroqTransportTests(unittest.TestCase):
+    def test_real_slow_drip_response_stops_at_overall_deadline(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        import threading
+        import time
+
+        spec = importlib.util.spec_from_file_location(
+            "gravity_groq_drip", HOOKS / "groq_client.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        class Drip(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                try:
+                    for byte in b'{"choices":[{"message":{"content":"{}"}}]}':
+                        self.wfile.write(bytes([byte]))
+                        self.wfile.flush()
+                        time.sleep(0.025)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Drip)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with (
+                mock.patch.object(
+                    module, "_load_api_key", return_value="AUDIT_DUMMY_KEY"
+                ),
+                mock.patch.object(
+                    module, "API_URL", f"http://127.0.0.1:{server.server_port}/"
+                ),
+                mock.patch.object(module, "log_failure"),
+            ):
+                started = time.monotonic()
+                self.assertIsNone(module.call_groq("LOCAL_DUMMY_PROMPT", timeout=0.15))
+                self.assertLess(time.monotonic() - started, 0.8)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+    def test_entire_transport_has_a_deadline_without_secret_argv(self):
+        spec = importlib.util.spec_from_file_location(
+            "gravity_groq_deadline", HOOKS / "groq_client.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        body = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+        with (
+            mock.patch.object(module, "_load_api_key", return_value="AUDIT_DUMMY_KEY"),
+            mock.patch(
+                "subprocess.run", side_effect=subprocess.TimeoutExpired(["curl"], 0.01)
+            ) as run,
+            mock.patch.object(module, "log_failure"),
+        ):
+            self.assertIsNone(module.call_groq("AUDIT_DUMMY_PROMPT", timeout=0.01))
+        self.assertLessEqual(run.call_args.kwargs["timeout"], 0.01)
+        self.assertNotIn("AUDIT_DUMMY_KEY", str(run.call_args.args))
+        self.assertNotIn("AUDIT_DUMMY_PROMPT", str(run.call_args.args))
+        self.assertIn("AUDIT_DUMMY_KEY", run.call_args.kwargs["input"])
+
     def test_request_keeps_dummy_key_and_prompt_out_of_argv(self):
         spec = importlib.util.spec_from_file_location(
             "gravity_groq_test", HOOKS / "groq_client.py"
@@ -772,14 +929,18 @@ class GroqTransportTests(unittest.TestCase):
         with (
             mock.patch.object(module, "_load_api_key", return_value="AUDIT_DUMMY_KEY"),
             mock.patch.object(
-                subprocess, "run", side_effect=AssertionError("argv transport")
-            ),
-            mock.patch.object(module, "urlopen", return_value=reply) as fetch,
+                subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess(
+                    ["curl"], 0, json.dumps(body), ""
+                ),
+            ) as fetch,
         ):
             self.assertEqual(module.call_groq("AUDIT_DUMMY_PROMPT"), {"ok": True})
-        request = fetch.call_args.args[0]
-        self.assertIn("AUDIT_DUMMY_KEY", request.get_header("Authorization"))
-        self.assertIn("AUDIT_DUMMY_PROMPT", request.data.decode())
+        self.assertNotIn("AUDIT_DUMMY_KEY", str(fetch.call_args.args))
+        self.assertNotIn("AUDIT_DUMMY_PROMPT", str(fetch.call_args.args))
+        self.assertIn("AUDIT_DUMMY_KEY", fetch.call_args.kwargs["input"])
+        self.assertIn("AUDIT_DUMMY_PROMPT", fetch.call_args.kwargs["input"])
 
     def test_network_error_log_omits_secret_and_prompt(self):
         spec = importlib.util.spec_from_file_location(
@@ -790,9 +951,9 @@ class GroqTransportTests(unittest.TestCase):
         with (
             mock.patch.object(module, "_load_api_key", return_value="AUDIT_DUMMY_KEY"),
             mock.patch.object(
-                module,
-                "urlopen",
-                side_effect=URLError("AUDIT_DUMMY_KEY AUDIT_DUMMY_PROMPT"),
+                subprocess,
+                "run",
+                side_effect=OSError("AUDIT_DUMMY_KEY AUDIT_DUMMY_PROMPT"),
             ),
             mock.patch.object(module, "log_failure") as log,
         ):

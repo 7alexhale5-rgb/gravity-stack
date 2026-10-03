@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 DEFAULT_MODEL = "moonshotai/kimi-k2-instruct-0905"
 DEFAULT_TIMEOUT = 15
+API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
 def _load_api_key() -> str:
@@ -67,6 +68,7 @@ def call_groq(
     Sends the key and prompt in the HTTPS request, never process arguments.
     Validates response structure before returning.
     """
+    deadline = time.monotonic() + timeout
     api_key = _load_api_key()
     if not api_key:
         log_failure("no_api_key")
@@ -82,17 +84,33 @@ def call_groq(
         payload["response_format"] = {"type": "json_object"}
 
     try:
-        request = Request(
-            "https://api.groq.com/openai/v1/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
+        # Config travels over stdin: neither credentials nor prompts enter argv.
+        # Curl bounds slow-drip reads; the parent bounds connection and all reading.
+        if "\r" in api_key or "\n" in api_key:
+            log_failure("invalid_key_header")
+            return None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            log_failure("transport_timeout")
+            return None
+        config = "\n".join([
+            "url = " + json.dumps(API_URL),
+            "header = " + json.dumps("Authorization: Bearer " + api_key, ensure_ascii=False),
+            'header = "Content-Type: application/json"',
+            "data = " + json.dumps(json.dumps(payload), ensure_ascii=False),
+        ])
+        result = subprocess.run(
+            ["curl", "--silent", "--show-error", "--fail", "--max-time",
+             str(remaining), "--config", "-"],
+            input=config, capture_output=True, text=True, timeout=remaining,
         )
-        with urlopen(request, timeout=timeout) as result:
-            response = json.load(result)
+        if result.returncode:
+            log_failure("transport_exit_" + str(result.returncode))
+            return None
+        if time.monotonic() >= deadline:
+            log_failure("transport_timeout")
+            return None
+        response = json.loads(result.stdout)
 
         # Validate response structure (OWASP A03 mitigation)
         if not isinstance(response, dict) or "choices" not in response:
@@ -114,11 +132,8 @@ def call_groq(
     except json.JSONDecodeError:
         log_failure("json_decode_error")
         return None
-    except HTTPError as error:
-        log_failure(f"http_status_{error.code}")
-        return None
-    except URLError:
-        log_failure("network_error")
+    except subprocess.TimeoutExpired:
+        log_failure("transport_timeout")
         return None
     except Exception as error:
         log_failure(f"unexpected_{type(error).__name__}")

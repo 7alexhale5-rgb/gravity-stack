@@ -54,6 +54,139 @@ def git_executable(word):
 
 def shell_tokens(command):
     """Keep literal punctuation distinct from shell operators after decoding."""
+    shells = {
+        "bash",
+        "sh",
+        "zsh",
+        "dash",
+        "ksh",
+        "eval",
+        "source",
+        ".",
+        "env",
+        "exec",
+        "command",
+    }
+
+    def executable_heads(words):
+        heads = []
+        at_head = True
+        for token in words:
+            word, operator = (
+                token
+                if isinstance(token, tuple)
+                else (token, bool(token) and all(char in ";&|\n" for char in token))
+            )
+            if operator:
+                at_head = True
+            elif at_head:
+                if word in {"env", "exec", "command"} or re.match(
+                    r"^[A-Za-z_][A-Za-z0-9_]*=", word
+                ):
+                    if word in {"env", "exec", "command"}:
+                        heads.append(word)
+                    continue
+                heads.append(word if word == "." else Path(word).name)
+                at_head = False
+        return heads
+
+    # Heredoc bodies are data unless fed to a shell or containing executable
+    # substitutions in an unquoted heredoc. Unsupported delimiter syntax refuses.
+    lines = command.splitlines(keepends=True)
+    code = []
+    line_index = 0
+    quote_state = ""
+    had_documents = False
+    while line_index < len(lines):
+        header = lines[line_index]
+        line_index += 1
+        documents = []
+        header_substitution = False
+        escaped_header = False
+        position = 0
+        while position < len(header):
+            char = header[position]
+            if escaped_header:
+                escaped_header = False
+            elif char == "\\" and quote_state != chr(39):
+                escaped_header = True
+            elif quote_state:
+                if quote_state == chr(34) and (
+                    char == "`" or header.startswith("$(", position)
+                ):
+                    header_substitution = True
+                if char == quote_state:
+                    quote_state = ""
+            elif char in (chr(39), chr(34)):
+                quote_state = char
+            elif char == "`" or header.startswith("$(", position):
+                header_substitution = True
+            elif char == "#" and (
+                position == 0 or header[position - 1] in " \t\r\n;&|()<>"
+            ):
+                break
+            elif header.startswith("<<", position) and not header.startswith(
+                "<<<", position
+            ):
+                match = re.match(
+                    r"<<(-?)\s*([\x27][^\x27]*[\x27]|[\x22][^\x22]*[\x22]|[A-Za-z0-9_]+)(?=\s|[;&|<>]|$)",
+                    header[position:],
+                )
+                if match is None:
+                    raise ValueError("unsupported heredoc delimiter")
+                raw = match.group(2)
+                documents.append(
+                    (
+                        shlex.split(raw)[0],
+                        bool(match.group(1)),
+                        raw[0] in (chr(39), chr(34)),
+                    )
+                )
+                position += match.end()
+                continue
+            position += 1
+        code.append(header)
+        if documents:
+            had_documents = True
+            if header_substitution:
+                raise ValueError(
+                    "heredoc in executable substitution cannot be inspected"
+                )
+            if quote_state:
+                raise ValueError("multiline quoted heredoc header cannot be inspected")
+            lexer = shlex.shlex(header, posix=True, punctuation_chars=";&|<>\n")
+            lexer.whitespace = " \t\r"
+            lexer.whitespace_split = True
+            lexer.commenters = "#"
+            if any(head in shells for head in executable_heads(list(lexer))):
+                raise ValueError(
+                    "heredoc supplied to executable shell cannot be inspected"
+                )
+        for delimiter, strip_tabs, quoted in documents:
+            while line_index < len(lines):
+                body = lines[line_index]
+                line_index += 1
+                code.append("\n")
+                if (body.lstrip("\t") if strip_tabs else body).rstrip(
+                    "\r\n"
+                ) == delimiter:
+                    break
+                if not quoted and ("$(" in body or "`" in body):
+                    raise ValueError(
+                        "executable heredoc substitution cannot be inspected"
+                    )
+            else:
+                raise ValueError("unterminated heredoc")
+    command = "".join(code)
+    if had_documents:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>\n")
+        lexer.whitespace = " \t\r"
+        lexer.whitespace_split = True
+        lexer.commenters = "#"
+        if any(head in shells for head in executable_heads(list(lexer))):
+            raise ValueError(
+                "heredoc combined with executable shell cannot be inspected"
+            )
     marker = "\ue000"
     if marker in command:
         raise ValueError("reserved shell marker")
@@ -61,7 +194,8 @@ def shell_tokens(command):
     quote = ""
     escaped = False
     substitution = False
-    for char in shell_continuations(command):
+    normalized = shell_continuations(command)
+    for position, char in enumerate(normalized):
         if escaped:
             escaped = False
         elif char == "\\" and quote != chr(39):
@@ -69,14 +203,16 @@ def shell_tokens(command):
                 marked.append(marker)
             escaped = True
         elif quote:
-            if char == "`" and quote == chr(34):
+            if quote == chr(34) and (
+                char == "`" or normalized.startswith("$(", position)
+            ):
                 substitution = True
             if char == quote:
                 quote = ""
         elif char in (chr(39), chr(34)):
             quote = char
             marked.append(marker)
-        elif char == "`":
+        elif char == "`" or normalized.startswith("$(", position):
             substitution = True
         marked.append(char)
     if substitution and re.search(
@@ -88,10 +224,26 @@ def shell_tokens(command):
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     lexer.commenters = ""
-    return [
+    tokens = [
         (word.replace(marker, ""), bool(word) and all(c in ";&|()<>\n" for c in word))
         for word in lexer
     ]
+    # Only executable wrapper arguments and pipeline inputs are shell programs;
+    # search patterns and printed strings containing Git commands are ordinary data.
+    group = []
+    for word, operator in tokens + [(";", True)]:
+        if operator and any(char in word for char in ";&\n"):
+            if any(head in shells for head in executable_heads(group)) and any(
+                re.search(
+                    r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\b(?:push|commit)\b", value
+                )
+                for value, _ in group
+            ):
+                raise ValueError("executable Git shell wrapper cannot be inspected")
+            group = []
+        else:
+            group.append((word, operator))
+    return tokens
 
 
 def commit_directories(command, base):
@@ -100,21 +252,32 @@ def commit_directories(command, base):
     if (
         any(git_executable(word) for word, operator in tokens if not operator)
         and any(word == "commit" for word, operator in tokens if not operator)
+        and any(
+            name.startswith("GIT_CONFIG")
+            or name
+            in {
+                "GIT_DIR",
+                "GIT_WORK_TREE",
+                "GIT_COMMON_DIR",
+                "GIT_INDEX_FILE",
+                "GIT_OBJECT_DIRECTORY",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                "GIT_CEILING_DIRECTORIES",
+                "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+            }
+            for name in os.environ
+        )
+    ):
+        raise ValueError(
+            "inherited Git environment cannot establish the commit worktree"
+        )
+    if (
+        any(git_executable(word) for word, operator in tokens if not operator)
+        and any(word == "commit" for word, operator in tokens if not operator)
         and any(operator and ("<" in word or ">" in word) for word, operator in tokens)
     ):
         raise ValueError(
             "Git commit redirections cannot be inspected; use a literal commit"
-        )
-    if any(
-        not operator
-        and not git_executable(word)
-        and re.search(
-            r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\bcommit\b", shell_continuations(word)
-        )
-        for word, operator in tokens
-    ):
-        raise ValueError(
-            "quoted or compound Git commit cannot be inspected; use literal Git"
         )
     if not any(git_executable(word) for word, operator in tokens if not operator):
         return []
@@ -148,7 +311,9 @@ def commit_directories(command, base):
                 uncertain_cwd = True
             else:
                 path = directory / args[1]
-                if any(part.is_symlink() for part in (path, *path.parents)):
+                if not path.is_dir() or any(
+                    part.is_symlink() for part in (path, *path.parents)
+                ):
                     uncertain_cwd = True
                 else:
                     directory = path.resolve()
@@ -173,6 +338,10 @@ def commit_directories(command, base):
                     raise ValueError("Git option requires a value")
                 value = args[position + 1]
                 if flag == "-C":
+                    if any(char in value for char in "$`~"):
+                        raise ValueError(
+                            "raw Git directory expansion cannot be inspected"
+                        )
                     target = (target / value).resolve()
                 elif flag == "--work-tree":
                     worktree = value
@@ -182,6 +351,8 @@ def commit_directories(command, base):
                     config_worktree = True
                 position += 2
             elif flag.startswith("-C") and len(flag) > 2:
+                if any(char in flag[2:] for char in "$`~"):
+                    raise ValueError("raw Git directory expansion cannot be inspected")
                 target = (target / flag[2:]).resolve()
                 position += 1
             elif flag.startswith("--work-tree="):
