@@ -248,6 +248,54 @@ chmod +x "$dest/install.sh"
         self.assertIn("11/11 passed", result.stdout)
         self.assertTrue((self.home / "installed-args").is_file())
 
+    def test_selected_profile_cannot_borrow_default_gate(self):
+        self.real_verifier()
+        profile = self.root / "selected profile"
+        (profile / "hooks").mkdir(parents=True)
+        (profile / "memory").mkdir()
+        (profile / "settings.json").write_text("{}")
+        self.env["CLAUDE_CONFIG_DIR"] = str(profile)
+        result = self.run_installer("--skip-dev-protocol")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Commit gate file and registration", result.stdout)
+
+    def test_profile_setup_and_verification_share_root(self):
+        self.real_verifier()
+        for script in ["02-claude-code.sh", "04-hooks.sh"]:
+            shutil.copy2(
+                SOURCE / "toolkit/scripts" / script, self.toolkit / "scripts" / script
+            )
+        shutil.copytree(SOURCE / "toolkit/configs", self.toolkit / "configs")
+        profile = self.root / "selected profile's config"
+        self.env["CLAUDE_CONFIG_DIR"] = str(profile)
+        default = self.home / ".claude/settings.json"
+        before = default.read_bytes()
+        for _ in range(2):
+            result = self.run_installer("--skip-dev-protocol")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((profile / "hooks/commit-gate.py").is_file())
+            self.assertTrue((profile / "memory").is_dir())
+            self.assertEqual(default.read_bytes(), before)
+            settings = json.loads((profile / "settings.json").read_text())
+            command = settings["hooks"]["PreToolUse"][1]["hooks"][0]["command"]
+            self.assertEqual(
+                shlex.split(command),
+                ["python3", str(profile.resolve() / "hooks/commit-gate.py")],
+            )
+            (profile / "current-session.jsonl").write_text("active profile proof\n")
+            backup_command = settings["hooks"]["PreCompact"][0]["hooks"][0]["command"]
+            copied = subprocess.run(
+                ["bash", "-c", backup_command],
+                env=self.env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(copied.returncode, 0, copied.stderr)
+            backups = list((profile / "backups").glob("session-*.jsonl"))
+            self.assertTrue(backups)
+            self.assertEqual(backups[-1].read_text(), "active profile proof\n")
+            self.assertFalse((self.home / ".claude/backups").exists())
+
     def test_literal_matchers_do_not_need_node_evaluation(self):
         self.real_verifier()
         self.script(

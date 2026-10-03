@@ -38,7 +38,7 @@ register() {
 register playwright --transport stdio -- npx -y @playwright/mcp@0.0.68
 register firecrawl --transport stdio -- npx -y firecrawl-mcp@3.9.0
 register perplexity --transport stdio -- npx -y @perplexity-ai/mcp-server@0.8.2
-register memory --transport stdio --env "MEMORY_FILE_PATH=$HOME/.claude/memory/graph.json" -- npx -y @modelcontextprotocol/server-memory@2026.1.26
+register memory --transport stdio --env "MEMORY_FILE_PATH=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/memory/graph.json" -- npx -y @modelcontextprotocol/server-memory@2026.1.26
 register hacker-news --transport stdio -- npx -y hn-mcp@1.0.0
 # Public documentation only, opt-in; no OpenAI API key needed.
 if [[ "${GRAVITY_INSTALL_OPENAI_DOCS:-0}" == 1 ]]; then

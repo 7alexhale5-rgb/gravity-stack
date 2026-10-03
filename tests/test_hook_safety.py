@@ -496,6 +496,59 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_actual_heredoc_indirect_expansions_and_integer_writers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            log = root / "calls"
+            fake = root / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for operation in ("commit -am broken", "push --force origin main"):
+                prefix = "a=(0); expression='a[$(git " + operation + "; printf 0)]'; "
+                tails = [
+                    "cat <<EOF\n${a[expression]}\nEOF",
+                    "value=abc; cat <<EOF\n${value:expression:1}\nEOF",
+                ]
+                tails += [
+                    "declare -i number; " + wrapper + "printf -v number '%s' expression"
+                    for wrapper in ("", "builtin ", "command ", "command builtin ")
+                ]
+                tails += ["declare -i number; read number <<< expression"]
+                for tail in tails:
+                    command = prefix + tail
+                    log.write_text("")
+                    subprocess.run(
+                        ["bash", "-c", command], env=env, capture_output=True, timeout=3
+                    )
+                    self.assertIn(operation, log.read_text(), command)
+                    with self.subTest(command=command):
+                        if operation.startswith("commit"):
+                            for hook in COMMIT_HOOKS:
+                                self.assertEqual(self.run_hook(hook, command), (2, 0))
+                        else:
+                            self.assertEqual(
+                                DestructiveHookTests().decision(command), "deny"
+                            )
+
+    def test_heredoc_literals_and_numeric_integer_writers_remain_data(self):
+        for command in (
+            "cat <<'EOF'\n${a[expression]}\nEOF",
+            "a=(one); cat <<EOF\n${a[0]}\nEOF",
+            "value=abc; cat <<EOF\n${value:0:1}\nEOF",
+            "declare -i number; printf -v number '%s' 123",
+            "declare -i number; builtin printf -vnumber '%s' 123",
+            "printf -v label '%s' expression",
+            "read label <<< expression",
+        ):
+            for hook in COMMIT_HOOKS:
+                self.assertEqual(self.run_hook(hook, command), (0, 0), command)
+            self.assertEqual(DestructiveHookTests().decision(command), "allow", command)
+
     def test_actual_compound_array_and_parameter_arithmetic(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -769,7 +822,7 @@ class CommitGateTests(unittest.TestCase):
                 for form in (
                     "printf '%s\\n' '{git}' | xargs -I CMD sh -c CMD",
                     "xargs -I CMD sh -c CMD <<'INPUT'\n{git}\nINPUT",
-                        "let 'a[$({git}; printf 0)]=1'",
+                    "let 'a[$({git}; printf 0)]=1'",
                     "builtin let 'a[$({git}; printf 0)]=1'",
                     "(( a[$({git}; printf 0)] = 1 ))",
                 ):
@@ -2573,6 +2626,12 @@ class CommitGateTests(unittest.TestCase):
             'echo "${CDPATH:=other}"; cd target; git commit -am broken',
             "echo '${CDPATH:=other}'; git commit -am safe",
             'printf "%n" CDPATH; git commit -am broken',
+            "cat <<EOF\n${a[expression]}\nEOF",
+            "cat <<EOF\n${value:expression:1}\nEOF",
+            "cat <<'EOF'\n${a[expression]}\nEOF",
+            "declare -i number; command builtin printf -v number '%s' expression",
+            "declare -i number; builtin printf -vnumber '%s' 123",
+            "declare -i number; read number <<< expression",
             'echo "$(date)"',
             "if test -f package.json; then npm test; fi",
             'echo "$(printf "$(git commit -am x)")"',

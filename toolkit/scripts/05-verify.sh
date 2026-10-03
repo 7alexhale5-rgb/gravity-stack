@@ -8,6 +8,7 @@ NC='\033[0m'
 
 PASS=0
 FAIL=0
+CONFIG_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
 check() {
   if eval "$2" &>/dev/null; then
@@ -29,8 +30,10 @@ commit_gate_registered() {
 import json, os, re, shlex, shutil, subprocess
 from pathlib import Path
 try:
-    settings = json.loads((Path.home() / '.claude/settings.json').read_text())
-    gate = Path.home() / '.claude/hooks/commit-gate.py'
+    selected = Path(os.environ.get('CLAUDE_CONFIG_DIR') or str(Path.home() / '.claude'))
+    root = selected.resolve()
+    settings = json.loads((root / 'settings.json').read_text())
+    gate = root / 'hooks/commit-gate.py'
     def matches_bash(matcher):
         # Claude uses exact alternatives or JavaScript RegExp.test, not Python regex.
         if matcher in ('', '*'):
@@ -60,13 +63,27 @@ try:
         if position < len(args) and args[position] == '--':
             position += 1
         # Recognize literal shell spellings, without expanding single-quoted variables.
-        relative = str(gate.relative_to(Path.home()))
+        try:
+            relative = str(gate.relative_to(Path.home().resolve()))
+        except ValueError:
+            relative = None
         absolute = str(gate)
         supported = {
             absolute, '"' + absolute + '"', "'" + absolute + "'",
-            '~/' + relative, '$HOME/' + relative, '${HOME}/' + relative,
-            '"$HOME/' + relative + '"', '"${HOME}/' + relative + '"',
         }
+        spelled_gate = str(selected / 'hooks/commit-gate.py')
+        if Path(spelled_gate).is_absolute():
+            supported.update({spelled_gate, '"' + spelled_gate + '"', "'" + spelled_gate + "'"})
+        if relative is not None:
+            supported.update({
+                '~/' + relative, '$HOME/' + relative, '${HOME}/' + relative,
+                '"$HOME/' + relative + '"', '"${HOME}/' + relative + '"',
+            })
+        # shlex.quote's literal spelling handles spaces and apostrophes without
+        # interpreting variables, substitutions, operators, or extra arguments.
+        literal_command = ' '.join(args[:position]) + ' ' + shlex.quote(absolute)
+        if command == literal_command:
+            return True
         # The gate accepts no script arguments or shell composition. Suffixes can
         # mask its blocking exit status or run it in the background.
         return position == len(args) - 1 and args[position] in supported
@@ -96,9 +113,9 @@ echo ""
 
 echo -e "${BOLD}Claude Code:${NC}"
 check "CLI installed" "command -v claude" "claude --version 2>/dev/null || echo 'installed'"
-check "Settings found" "test -f $HOME/.claude/settings.json" "echo '~/.claude/settings.json'"
-check "Hooks directory" "test -d $HOME/.claude/hooks" "echo '~/.claude/hooks/'"
-check "Memory directory" "test -d $HOME/.claude/memory" "echo '~/.claude/memory/'"
+check "Settings found" 'test -f "$CONFIG_ROOT/settings.json"' 'printf "%s" "$CONFIG_ROOT/settings.json"'
+check "Hooks directory" 'test -d "$CONFIG_ROOT/hooks"' 'printf "%s" "$CONFIG_ROOT/hooks/"'
+check "Memory directory" 'test -d "$CONFIG_ROOT/memory"' 'printf "%s" "$CONFIG_ROOT/memory/"'
 echo ""
 
 check "Commit gate file and registration" "commit_gate_registered" "echo 'read back from settings'"

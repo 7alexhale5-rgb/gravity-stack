@@ -470,6 +470,43 @@ def shell_tokens(command):
                 else:
                     return True
                 continue
+            if name in {"printf", "read", "mapfile", "readarray"}:
+                end = index
+                while end < len(words) and not (
+                    words[end] and all(c in ";&|()<>\n" for c in words[end])
+                ):
+                    end += 1
+                operands = [value.replace("\ue003", "") for value in words[index:end]]
+                if name == "printf" and operands and operands[0].startswith("-v"):
+                    if operands[0] == "-v":
+                        if len(operands) < 2:
+                            raise ValueError("missing printf variable target")
+                        target, values = operands[1], operands[2:]
+                    else:
+                        target, values = operands[0][2:], operands[1:]
+                    indexed = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\[(.*)\]", target)
+                    if indexed:
+                        if not literal_arithmetic(indexed.group(2)):
+                            raise ValueError("unresolved printf arithmetic array target")
+                        variable = indexed.group(1)
+                    elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", target):
+                        variable = target
+                    else:
+                        raise ValueError("unresolved printf variable target")
+                    # Integer variable writes evaluate the resulting string as
+                    # Bash arithmetic. Prove only this simple literal format;
+                    # unresolved formats/values run in a separate invocation.
+                    if variable in integer_names and not (
+                        len(values) == 2 and values[0] == "%s"
+                        and literal_arithmetic(values[1])
+                    ):
+                        raise ValueError("unresolved printf integer assignment")
+                elif name != "printf":
+                    targets = operands or (["REPLY"] if name == "read" else ["MAPFILE"])
+                    if any(target in integer_names for target in targets):
+                        raise ValueError("unresolved input builtin integer assignment")
+                head = False
+                continue
             if name == "let":
                 for operand in words[index:]:
                     if operand and all(c in ";&|()<>\n" for c in operand):
@@ -889,7 +926,6 @@ def shell_tokens(command):
                     break
                 if (
                     not quoted
-                    and ("$(" in body or "`" in body)
                     and inspect_substitutions(body, quote_sensitive=False)[1]
                 ):
                     raise ValueError(
