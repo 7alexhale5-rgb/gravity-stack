@@ -6,7 +6,9 @@ Model Context Protocol (MCP) servers give Claude Code access to external tools a
 
 An MCP server exposes **tools** (functions Claude can call) and **resources** (data Claude can read). When you configure an MCP server, Claude Code launches it as a subprocess or connects to it over the network. The server handles authentication, API calls, and data formatting, presenting a clean interface to Claude.
 
-MCP servers are configured in `~/.claude/settings.json` under the `mcpServers` key.
+Register servers with `claude mcp add --scope user`; Claude stores user registrations in `~/.claude.json`. Project registrations belong in `.mcp.json`, not `settings.json`. The JSON snippets below are server blocks for `.mcp.json`; review project approvals before loading them. See the [official MCP guide](https://code.claude.com/docs/en/mcp).
+
+The installer registers five servers and preserves any existing names. Registration, connection and a successful tool call are separate checks. API-key presence alone does not prove access.
 
 ## npm Servers
 
@@ -21,7 +23,7 @@ Browser automation for testing and web interaction.
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["@anthropic/mcp-playwright"]
+      "args": ["-y", "@playwright/mcp@0.0.68"]
     }
   }
 }
@@ -70,7 +72,7 @@ AI-powered web search for real-time information retrieval.
   "mcpServers": {
     "perplexity": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-perplexity"],
+      "args": ["-y", "@perplexity-ai/mcp-server@0.8.2"],
       "env": {
         "PERPLEXITY_API_KEY": "pplx-your-key-here"
       }
@@ -96,9 +98,9 @@ Knowledge graph memory server for persistent entity and relationship storage.
   "mcpServers": {
     "memory": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-memory"],
+      "args": ["-y", "@modelcontextprotocol/server-memory@2026.1.26"],
       "env": {
-        "MEMORY_FILE": "~/.claude/memory/knowledge-graph.json"
+        "MEMORY_FILE_PATH": "/absolute/path/to/memory/graph.json"
       }
     }
   }
@@ -124,7 +126,7 @@ Access Hacker News stories, comments, and search.
   "mcpServers": {
     "hackernews": {
       "command": "npx",
-      "args": ["-y", "mcp-hackernews"]
+      "args": ["-y", "hn-mcp@1.0.0"]
     }
   }
 }
@@ -202,95 +204,45 @@ crawl4ai serve --port 11235
 
 ## Cloud Servers
 
-These servers connect to cloud services and are configured with OAuth or API keys.
-
-### Gmail
-
-Read and send emails through Gmail.
-
-```json
-{
-  "mcpServers": {
-    "gmail": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-gmail"],
-      "env": {
-        "GOOGLE_CLIENT_ID": "your-client-id",
-        "GOOGLE_CLIENT_SECRET": "your-client-secret",
-        "GOOGLE_REFRESH_TOKEN": "your-refresh-token"
-      }
-    }
-  }
-}
-```
-
-**Tools provided**: `search_emails`, `read_email`, `send_email`, `list_labels`
-
-**Requirements**: Google Cloud project with Gmail API enabled. OAuth 2.0 credentials.
+Gmail, Calendar and Slack are optional integrations. The previously listed npm
+packages were unverified and are not installation instructions. Select a supported
+connector in the host's integration settings, complete its authorization, and prove
+actual access. These services are not registered by the core toolkit installer.
 
 ---
 
-### Google Calendar
+## Research Servers (optional)
 
-Manage calendar events and schedules.
+Optional add-ons used by Research Stack focus tags. They are not part of the 7+3 core, and every tag has a
+free fallback. Canonical list, detection rules and fallbacks: research-stack `references/tool-registry.json`
+(github.com/7alexhale5-rgb/research-stack). The site's Research Servers section renders these entries from
+`site/src/lib/data/mcp-servers.ts`.
 
-```json
-{
-  "mcpServers": {
-    "google-calendar": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-google-calendar"],
-      "env": {
-        "GOOGLE_CLIENT_ID": "your-client-id",
-        "GOOGLE_CLIENT_SECRET": "your-client-secret",
-        "GOOGLE_REFRESH_TOKEN": "your-refresh-token"
-      }
-    }
-  }
-}
-```
-
-**Tools provided**: `list_events`, `create_event`, `update_event`, `delete_event`
-
-**Requirements**: Google Cloud project with Calendar API enabled. OAuth 2.0 credentials (can share credentials with Gmail).
-
----
-
-### Slack
-
-Interact with Slack workspaces.
-
-```json
-{
-  "mcpServers": {
-    "slack": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-slack"],
-      "env": {
-        "SLACK_BOT_TOKEN": "xoxb-your-token",
-        "SLACK_TEAM_ID": "T0123456789"
-      }
-    }
-  }
-}
-```
-
-**Tools provided**: `send_message`, `read_channel`, `list_channels`, `search_messages`
-
-**Requirements**: Slack app with Bot token. Create at [api.slack.com/apps](https://api.slack.com/apps).
-
----
+| Server | Focus tag | Auth |
+| --- | --- | --- |
+| Exa | market | credentials (key or sign-in) |
+| DataForSEO | seo | credentials (key or sign-in) |
+| Mobbin | ui-ux | credentials (key or sign-in) |
+| Refero | ui-ux | credentials (key or sign-in) |
+| Socket | several | none |
+| Semgrep | security | none |
+| Context7 | devtools | none |
+| DeepWiki | devtools | none |
+| Figma | ui-ux | account sign-in |
+| Chrome DevTools | perf | none |
 
 ## Full Configuration Example
 
-Here is a complete `mcpServers` block with all 10 servers:
+Here is a complete project `.mcp.json` block for the seven local core registrations.
+Cloud integrations use the host settings and are omitted from this JSON.
+Replace the memory file placeholder with an absolute path before use.
 
 ```json
 {
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["@anthropic/mcp-playwright"]
+      "args": ["-y", "@playwright/mcp@0.0.68"]
     },
     "firecrawl": {
       "command": "npx",
@@ -301,21 +253,21 @@ Here is a complete `mcpServers` block with all 10 servers:
     },
     "perplexity": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-perplexity"],
+      "args": ["-y", "@perplexity-ai/mcp-server@0.8.2"],
       "env": {
         "PERPLEXITY_API_KEY": "pplx-xxx"
       }
     },
     "memory": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-memory"],
+      "args": ["-y", "@modelcontextprotocol/server-memory@2026.1.26"],
       "env": {
-        "MEMORY_FILE": "~/.claude/memory/knowledge-graph.json"
+        "MEMORY_FILE_PATH": "/absolute/path/to/memory/graph.json"
       }
     },
     "hackernews": {
       "command": "npx",
-      "args": ["-y", "mcp-hackernews"]
+      "args": ["-y", "hn-mcp@1.0.0"]
     },
     "obsidian": {
       "type": "sse",
@@ -324,32 +276,6 @@ Here is a complete `mcpServers` block with all 10 servers:
     "crawl4ai": {
       "type": "sse",
       "url": "http://localhost:11235/sse"
-    },
-    "gmail": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-gmail"],
-      "env": {
-        "GOOGLE_CLIENT_ID": "xxx",
-        "GOOGLE_CLIENT_SECRET": "xxx",
-        "GOOGLE_REFRESH_TOKEN": "xxx"
-      }
-    },
-    "google-calendar": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-google-calendar"],
-      "env": {
-        "GOOGLE_CLIENT_ID": "xxx",
-        "GOOGLE_CLIENT_SECRET": "xxx",
-        "GOOGLE_REFRESH_TOKEN": "xxx"
-      }
-    },
-    "slack": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-slack"],
-      "env": {
-        "SLACK_BOT_TOKEN": "xoxb-xxx",
-        "SLACK_TEAM_ID": "Txxx"
-      }
     }
   }
 }
@@ -411,7 +337,7 @@ await server.connect(transport);
 
 ### Register Your Server
 
-Add it to `settings.json`:
+Add it to the project `.mcp.json`, or register its absolute executable path with `claude mcp add --scope user`:
 
 ```json
 {
@@ -431,3 +357,17 @@ Add it to `settings.json`:
 - **Handle errors gracefully**: Return error messages, do not throw unhandled exceptions.
 - **Add descriptions**: Tool and parameter descriptions help Claude use them correctly.
 - **Test locally**: Run your server with `npx @modelcontextprotocol/inspector` to test tools interactively.
+
+
+## Optional OpenAI documentation
+
+The public [OpenAI Docs MCP](https://developers.openai.com/learn/docs-mcp) exposes documentation
+search and page fetching. It does not call the paid OpenAI API. Enable its registration with
+`GRAVITY_INSTALL_OPENAI_DOCS=1 bash toolkit/install.sh`, or add it explicitly:
+
+```bash
+claude mcp add --scope user --transport http openai-docs https://developers.openai.com/mcp
+```
+
+Preserve an existing carrier instead of registering the same server twice. Use a search and
+fetch call to prove it works. This connector is optional and does not choose your model.

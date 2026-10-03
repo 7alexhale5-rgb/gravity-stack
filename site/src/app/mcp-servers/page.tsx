@@ -1,4 +1,9 @@
-import { mcpServers, cloudServers } from "@/lib/data/mcp-servers";
+import {
+  mcpServers,
+  researchServers,
+  cloudServers,
+  type MCPServer,
+} from "@/lib/data/mcp-servers";
 import { Card } from "@/components/Card";
 import { Badge } from "@/components/Badge";
 import { CodeBlock } from "@/components/CodeBlock";
@@ -9,7 +14,8 @@ import { PageHeader } from "@/components/PageHeader";
 
 export const metadata = {
   title: "MCP Servers",
-  description: "7+3 MCP servers connecting Claude to browsers, search engines, memory, and more.",
+  description:
+    "7+3 core MCP servers connecting Claude to browsers, search engines, memory, and more, plus optional research servers.",
 };
 
 export default function MCPServersPage() {
@@ -30,36 +36,33 @@ export default function MCPServersPage() {
       <Callout title="Project registration">
         Add each example to .mcp.json in your project root. Merge its mcpServers
         entry with existing registrations so other servers stay configured.
+        Replace absolute path placeholders with paths on your own machine.
       </Callout>
 
       <div className="space-y-6 mb-16">
         {mcpServers.map((server, i) => (
-          <ScrollReveal key={server.slug} delay={i * 0.06}>
-            <Card className="space-y-4">
-              <div className="flex items-start justify-between">
-                <h3 className="font-medium text-lg text-text">{server.name}</h3>
-                <div className="flex gap-2">
-                  <Badge variant={server.priority}>{server.priority}</Badge>
-                  <Badge variant={server.type}>{server.type}</Badge>
-                </div>
-              </div>
-              <p className="text-sm text-dim">{server.description}</p>
-              {server.apiKeyRequired && (
-                <Callout variant="warning" title="API Key Required">
-                  This server requires an API key set as an environment variable.
-                </Callout>
-              )}
-              <CodeBlock
-                code={JSON.stringify(
-                  { mcpServers: { [server.slug]: server.config } },
-                  null,
-                  2,
-                )}
-                language="json"
-                filename=".mcp.json"
-              />
-            </Card>
-          </ScrollReveal>
+          <ServerCard key={server.slug} server={server} delay={i * 0.06} />
+        ))}
+      </div>
+
+      <SectionDivider className="mb-16" />
+
+      <ScrollReveal>
+        <h2 className="font-heading text-3xl text-text mb-6">
+          Research Servers ({researchServers.length})
+        </h2>
+      </ScrollReveal>
+      <ScrollReveal delay={0.1}>
+        <p className="text-dim mb-6">
+          Optional add-ons, not part of the 7+3 core. Research Stack focus tags
+          call them when they are connected, and every tag has a free fallback,
+          so the pipeline still runs without them. Source: research-stack{" "}
+          <code>references/tool-registry.json</code>; see docs/mcp-servers.md.
+        </p>
+      </ScrollReveal>
+      <div className="space-y-6 mb-16">
+        {researchServers.map((server, i) => (
+          <ServerCard key={server.slug} server={server} delay={i * 0.06} />
         ))}
       </div>
 
@@ -72,7 +75,8 @@ export default function MCPServersPage() {
       </ScrollReveal>
       <ScrollReveal delay={0.1}>
         <p className="text-dim mb-6">
-          These connect via Claude Desktop&apos;s native integrations — no local setup needed.
+          These connect via Claude Desktop&apos;s native integrations — no local
+          setup needed.
         </p>
       </ScrollReveal>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -86,5 +90,37 @@ export default function MCPServersPage() {
         ))}
       </div>
     </div>
+  );
+}
+
+function ServerCard({ server, delay }: { server: MCPServer; delay: number }) {
+  return (
+    <ScrollReveal delay={delay}>
+      <Card className="space-y-4">
+        <div className="flex items-start justify-between">
+          <h3 className="font-medium text-lg text-text">{server.name}</h3>
+          <div className="flex gap-2">
+            <Badge variant={server.priority}>{server.priority}</Badge>
+            <Badge variant={server.type}>{server.type}</Badge>
+          </div>
+        </div>
+        <p className="text-sm text-dim">{server.description}</p>
+        {server.apiKeyRequired && (
+          <Callout variant="warning" title="Credentials Required">
+            This server needs credentials (an API key or a sign-in). See its
+            description.
+          </Callout>
+        )}
+        <CodeBlock
+          code={JSON.stringify(
+            { mcpServers: { [server.slug]: server.config } },
+            null,
+            2,
+          )}
+          language="json"
+          filename=".mcp.json"
+        />
+      </Card>
+    </ScrollReveal>
   );
 }

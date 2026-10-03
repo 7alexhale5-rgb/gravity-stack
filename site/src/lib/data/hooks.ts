@@ -45,8 +45,10 @@ sys.exit(2 if any(p in path for p in GUARDED) else 0)`,
     event: "PreToolUse",
     matcher: "Bash",
     description: "Blocks git commits in TypeScript projects if tsc --noEmit fails.",
-    why: "The gate checks detected commits and blocks failed or unavailable TypeScript checks. Keep CI and branch protections for changes outside this hook.",
-    code: `python3 "$HOME/.claude/hooks/commit-gate.py"`,
+    why: "Checks the applicable TypeScript project before a literal commit. Ambiguous shell commands and multiple commit targets are refused. Live hook firing still needs a separate check.",
+    code: `# Install the reviewed toolkit/configs/commit-gate.py first.
+# Register this command as PreToolUse/Bash with timeout: 70.
+python3 "$HOME/.claude/hooks/commit-gate.py"`,
     language: "bash",
   },
   {

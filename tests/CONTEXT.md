@@ -16,6 +16,8 @@
 - `tests/test_sanitization.py`: external-profile path, EOF, error and output regression tests.
 - `tests/test_installer.py`: regression tests for optional process-skill installation.
 - `tests/check_rendered_mcp.py`: checks copied registration JSON and destination after the site build.
+- `tests/test_hook_safety.py`: stdin hook decisions, failed commit checks and credential transport regressions.
+- `tests/test_eval_reports.py`: offline failed-case retention, private modes and fresh batch diagnostics.
 - `tests/test_sanitization.sh` and `tests/sanitization-patterns.txt`: public safety checks.
 
 ## Human check

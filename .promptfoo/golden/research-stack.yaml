@@ -1,22 +1,67 @@
-- description: "research-stack produces multi-source report"
+- description: "research-stack produces a decision-first v3 report"
   vars:
     topic: "Best practices for LLM prompt caching in production"
   assert:
     - type: contains-any
-      value: ["## Sources", "## Findings", "## Summary", "## Recommendations"]
+      value: ["## Decision answer", "## Decision Answer"]
+    - type: contains-any
+      value: ["## Contradictions"]
+    - type: contains-any
+      value: ["## Patterns"]
+    - type: contains-any
+      value: ["## Coverage gaps", "## Coverage Gaps"]
+    - type: contains-any
+      value: ["[WS]", "[HN", "[FC:", "[PX"]
     - type: llm-rubric
-      value: "Report should cite multiple sources with confidence ratings and practical recommendations."
+      value: "Report opens with a decision answer, has one section per sub-question, tags claims with sources, and ends with a source-stats dashboard."
 
-- description: "research-stack --youtube discovers relevant content"
+- description: "research-stack --youtube tags YouTube findings"
   vars:
     topic: "Claude Code advanced workflows. Mode: --youtube"
   assert:
+    - type: contains-any
+      value: ["[YT:"]
     - type: llm-rubric
-      value: "Should include YouTube video references with titles, channels, and relevance ratings."
+      value: "Should include YouTube findings tagged [YT:channel] with video titles and relevance."
 
-- description: "research-stack --validate catches citation issues"
+- description: "research-stack --validate adds a Validation Gate"
   vars:
     topic: "React Server Components performance benchmarks. Mode: --validate"
   assert:
+    - type: contains-any
+      value: ["Validation Gate"]
     - type: llm-rubric
-      value: "Should flag unverifiable claims and include a validation summary section."
+      value: "Should include a Validation Gate block that flags unverifiable claims and stale sources and gives a PASS or FAIL result."
+
+- description: "research-stack --focus seo adds an SEO scorecard"
+  vars:
+    topic: "How should a B2B SaaS docs site improve organic traffic and AI Overview visibility? Mode: --focus seo"
+  assert:
+    - type: contains-any
+      value: ["SEO scorecard", "SEO Scorecard"]
+    - type: contains-any
+      value: ["[DFS", "[SPY", "[SEM", "[AHR", "[GSC", "[PSI", "[CRUX", "[SCHEMA", "[AEO", "[FC", "[WS]"]
+    - type: llm-rubric
+      value: "Has an SEO scorecard addendum. Either cites at least one SEO source tag ([DFS] [SPY] [SEM] [AHR] [GSC] [PSI] [CRUX] [SCHEMA] [AEO] [FC]) or states explicitly that paid SEO tools were unavailable and names the free fallbacks used."
+
+- description: "research-stack --focus security adds a threat and advisory table"
+  vars:
+    topic: "Is it safe to adopt a popular npm markdown parser in a Next.js app? Mode: --focus security"
+  assert:
+    - type: contains-any
+      value: ["Threat and advisory table", "Threat and Advisory Table"]
+    - type: contains-any
+      value: ["[OSV", "[GHSA", "[KEV", "[NVD", "[SOCK", "[SG", "[SECRET", "[OWASP", "Coverage gaps", "Coverage Gaps"]
+    - type: llm-rubric
+      value: "Has a Threat and advisory table addendum with supported advisories or risks citing documented security sources ([OSV] [GHSA] [KEV] [NVD] [SOCK] [SG] [SECRET] [OWASP]), or accurately states explicit security coverage gaps when those sources could not be established. Do not invent advisories or source access."
+
+- description: "research-stack --focus comms adds a telephony and messaging plan"
+  vars:
+    topic: "Should we build a click-to-call and power dialer with SMS into our custom CRM on RingCentral or Twilio? Mode: --focus comms"
+  assert:
+    - type: contains-any
+      value: ["Telephony and messaging plan", "Telephony and Messaging Plan"]
+    - type: contains-any
+      value: ["[RC", "[TW", "[TNX", "[AIR", "[DP", "[CR", "[FCC", "[WS]"]
+    - type: llm-rubric
+      value: "Has a Telephony and messaging plan addendum with one row per calling mode (build or buy, event path, compliance prerequisite). Either cites at least one comms source tag ([RC] [TW] [TNX] [AIR] [DP] [CR] [FCC]) or states explicitly that paid comms tools were unavailable and names the free fallbacks used."

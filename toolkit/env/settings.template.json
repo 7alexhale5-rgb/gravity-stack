@@ -75,7 +75,8 @@
           },
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/commit-gate.py"
+            "command": "python3 ~/.claude/hooks/commit-gate.py",
+            "timeout": 70
           }
         ]
       }
@@ -261,55 +262,5 @@
     "figma@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {},
-  "effortLevel": "xhigh",
-  "mcpServers": {
-    "firecrawl": {
-      "command": "npm",
-      "args": [
-        "exec",
-        "firecrawl-mcp@3.9.0"
-      ]
-    },
-    "hacker-news": {
-      "command": "npm",
-      "args": [
-        "exec",
-        "hn-mcp@1.0.0"
-      ]
-    },
-    "perplexity": {
-      "command": "npm",
-      "args": [
-        "exec",
-        "@perplexity-ai/mcp-server@0.8.2"
-      ]
-    },
-    "memory": {
-      "command": "npm",
-      "args": [
-        "exec",
-        "@modelcontextprotocol/server-memory@2026.1.26",
-        "--file",
-        "~/.claude/memory/graph.json"
-      ]
-    },
-    "playwright": {
-      "command": "npm",
-      "args": [
-        "exec",
-        "@playwright/mcp@0.0.68"
-      ]
-    },
-    "vercel": {
-      "type": "http",
-      "url": "https://mcp.vercel.com"
-    },
-    "claude-mermaid": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "claude-mermaid@1.6.2"
-      ]
-    }
-  }
+  "effortLevel": "xhigh"
 }

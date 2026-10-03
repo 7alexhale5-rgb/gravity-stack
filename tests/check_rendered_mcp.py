@@ -51,8 +51,11 @@ def main():
     ]
     assert len(memories) == 1, "Memory example missing or duplicated"
     assert (
-        memories[0]["env"]["MEMORY_FILE_PATH"] == "${HOME}/.claude/memory/graph.json"
+        memories[0]["env"]["MEMORY_FILE_PATH"] == "/absolute/path/to/memory/graph.json"
     ), "Memory file setting incorrect"
+    assert "Replace absolute path placeholders" in html, (
+        "Literal placeholder replacement guidance missing"
+    )
     assert "merge" in html.lower(), "Existing registration merge guidance missing"
     print(
         f"Checked {len(configs)} rendered project MCP examples and Memory configuration"
