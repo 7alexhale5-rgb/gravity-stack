@@ -391,7 +391,16 @@ def shell_tokens(command):
                         raise ValueError("unresolved executable wrapper cannot inspect guarded work")
                     head = False
                     continue
-                opaque_shell = name == "watch" or name == "sudo" and any(value.replace("\ue003", "") in {"-s", "--shell", "-i", "--login"} for value in words[index:child])
+                watch_shell = name == "watch" and not any(value.replace("\ue003", "") in {"-x", "--exec"} for value in words[index:child])
+                if watch_shell:
+                    # Default watch concatenates argv without shell quoting.
+                    # Reconstruct that program, not shlex.join protected data.
+                    if any("\ue002" in value for value in words[child:]):
+                        raise ValueError("expanded watch shell program cannot be inspected")
+                    program = " ".join(value.replace("\ue003", "") for value in words[child:])
+                    if possible_guarded(program, depth + 1):
+                        raise ValueError("guarded watch shell program requires a separate literal Git invocation")
+                opaque_shell = name == "sudo" and any(value.replace("\ue003", "") in {"-s", "--shell", "-i", "--login"} for value in words[index:child])
                 if opaque_shell and child < len(words) and possible_guarded(words[child].replace("\ue003", ""), depth + 1):
                     raise ValueError("opaque wrapper shell program cannot inspect guarded work")
                 if possible_guarded(shlex.join(words[child:]), depth + 1):

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -495,6 +496,140 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_watch_constructed_shell_program_and_direct_mode(self):
+        for prefix in ("watch -n 5", "watch -n5", "watch --interval=5"):
+            for git in ("git commit -am broken", "git push --force origin main"):
+                command = prefix + " echo 'tick; " + git + "'"
+                if "commit" in git:
+                    for hook in COMMIT_HOOKS:
+                        self.assertEqual(self.run_hook(hook, command), (2, 0))
+                else:
+                    self.assertEqual(DestructiveHookTests().decision(command), "deny")
+        for mode in ("-x", "--exec"):
+            command = (
+                "watch "
+                + mode
+                + " -n5 echo 'tick; git commit -am literal; git push --force origin main'"
+            )
+            for hook in COMMIT_HOOKS:
+                self.assertEqual(self.run_hook(hook, command), (0, 0))
+            self.assertEqual(DestructiveHookTests().decision(command), "allow")
+        program = "watch -n5 \"printf '%s' 'tick; git commit -am literal; git push --force origin main'\""
+        for hook in COMMIT_HOOKS:
+            self.assertEqual(self.run_hook(hook, program), (0, 0))
+        self.assertEqual(DestructiveHookTests().decision(program), "allow")
+
+    @unittest.skipUnless(shutil.which("watch"), "actual watch runtime is unavailable")
+    def test_actual_watch_shell_concatenation_executes_fake_git(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            log = root / "calls"
+            fake = root / "git"
+            fake.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\nwc -l < "$FAKE_GIT_LOG"\n'
+            )
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+                TERM="xterm",
+            )
+            for git in ("git commit -am broken", "git push --force origin main"):
+                log.write_text("")
+                result = subprocess.run(
+                    ["watch", "-g", "-n", "0.1", "echo", "tick; " + git],
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    timeout=3,
+                )
+                self.assertIn(result.returncode, (0, 1), result.stderr)
+                if result.returncode:
+                    self.assertIn(b"Inappropriate ioctl for device", result.stderr)
+                self.assertIn(git[4:], log.read_text())
+            log.write_text("")
+            result = subprocess.run(
+                [
+                    "watch",
+                    "-x",
+                    "-q",
+                    "1",
+                    "-n",
+                    "0.1",
+                    "echo",
+                    "tick; git commit -am literal",
+                ],
+                env=env,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=3,
+            )
+            self.assertIn(result.returncode, (0, 1), result.stderr)
+            if result.returncode:
+                self.assertIn(b"Inappropriate ioctl for device", result.stderr)
+            self.assertEqual(log.read_text(), "")
+
+    def test_commit_argument_expansion_cannot_mutate_git_environment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            alternate = root / "alternate"
+            (alternate / "git").mkdir(parents=True)
+            broken = root / "broken"
+            broken.mkdir()
+            (alternate / "git" / "config").write_text(
+                "[core]\nworktree = " + str(broken) + "\n"
+            )
+            config = subprocess.check_output(
+                ["git", "config", "--global", "--get", "core.worktree"],
+                env=dict(os.environ, XDG_CONFIG_HOME=str(alternate), HOME=str(root)),
+                text=True,
+            ).rstrip("\n")
+            self.assertEqual(config, str(broken))
+            fakebin = root / "fakebin"
+            fakebin.mkdir()
+            observed = root / "observed-environment"
+            executable = fakebin / "git"
+            executable.write_text(
+                '#!/bin/sh\nprintf \'%s\' "$XDG_CONFIG_HOME" > "$TEST_OBSERVED"\n'
+            )
+            executable.chmod(0o755)
+            subprocess.run(
+                ["bash", "-c", 'git commit -am "${XDG_CONFIG_HOME:=$TEST_ALTERNATE}"'],
+                env=dict(
+                    os.environ,
+                    PATH=str(fakebin) + os.pathsep + os.environ["PATH"],
+                    XDG_CONFIG_HOME="",
+                    TEST_ALTERNATE=str(alternate),
+                    TEST_OBSERVED=str(observed),
+                ),
+                check=True,
+                capture_output=True,
+                timeout=3,
+            )
+            self.assertEqual(observed.read_text(), str(alternate))
+            for hook in COMMIT_HOOKS:
+                for operand in (
+                    '"${XDG_CONFIG_HOME:=' + str(alternate) + '}"',
+                    '"${HOME:=' + str(alternate) + '}"',
+                    '"${GIT_CONFIG_GLOBAL:=' + str(alternate / "git" / "config") + '}"',
+                    '"$MESSAGE"',
+                ):
+                    with (
+                        self.subTest(hook=hook, operand=operand),
+                        mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": ""}),
+                    ):
+                        self.assertEqual(
+                            self.run_hook(hook, "git commit -am " + operand), (2, 0)
+                        )
+                for operand in (
+                    "'${XDG_CONFIG_HOME:=literal}'",
+                    r'"\${XDG_CONFIG_HOME:=literal}"',
+                ):
+                    self.assertEqual(
+                        self.run_hook(hook, "git commit -am " + operand), (0, 1)
+                    )
+
     def test_child_execution_wrappers_cannot_hide_guarded_git(self):
         for program in (
             "sudo -s '{git}'",
@@ -555,7 +690,7 @@ class CommitGateTests(unittest.TestCase):
             "setsid",
             "stdbuf -o L",
             "xargs -n 1",
-            "watch -n 5",
+            "watch -x -n 5",
             "sudo -s",
         ):
             command = (
@@ -2081,6 +2216,10 @@ class CommitGateTests(unittest.TestCase):
             tokenizers.append(namespace["shell_tokens"])
         for command in (
             "git status &&\ncd docs; git commit -m test",
+            "watch -n5 echo 'tick; git push --force origin main'",
+            "watch --exec -n5 echo 'tick; git push --force origin main'",
+            'git commit -am "${XDG_CONFIG_HOME:=/alternate}"',
+            "git commit -am '${XDG_CONFIG_HOME:=literal}'",
             "nice git commit -am broken",
             "xargs -n 1 git commit -am broken",
             "watch -n 5 git push --force origin main",
