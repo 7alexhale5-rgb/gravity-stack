@@ -69,7 +69,7 @@ def shell_continuations(command):
 
 
 def git_executable(word):
-    return word == "git" or (Path(word).is_absolute() and Path(word).name == "git")
+    return Path(word).name == "git"
 
 
 def shell_tokens(command):
@@ -681,14 +681,27 @@ if (any(git_executable(word) for word, operator in tokens if not operator)
         deny("inherited Git configuration environment cannot be safely inspected")
     heads = []
     at_head = True
+    mutating_printf = False
+    previous_head = ""
     for word, operator in tokens:
         if operator:
             at_head = True
+            previous_head = ""
         elif at_head:
-            heads.append(word)
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", word):
+                continue
+            name = word if word == "." else Path(word).name
+            if name in ("builtin", "command") or word in ("--", "-p"):
+                continue
+            heads.append(name)
+            previous_head = name
             at_head = False
+        elif previous_head:
+            mutating_printf |= previous_head == "printf" and word.startswith("-v")
+            previous_head = ""
+    mutators = ("source", ".", "export", "eval", "env", "exec", "command", "declare", "typeset", "readonly", "local", "unset", "read", "mapfile", "readarray", "set", "setopt", "unsetopt")
     if (any(not operator and word.startswith("GIT_CONFIG") for word, operator in tokens)
-            or any(word in ("source", ".", "export", "eval", "env", "exec", "command") for word in heads)):
+            or any(word in mutators for word in heads) or mutating_printf):
         deny("Git configuration environment or shell wrapper cannot be safely inspected")
 
 for index, (word, operator) in enumerate(tokens):

@@ -26,7 +26,7 @@ echo ""
 
 commit_gate_registered() {
   python3 - <<'PYTHON'
-import json, os, re, shlex, subprocess
+import json, os, re, shlex, shutil, subprocess
 from pathlib import Path
 try:
     settings = json.loads((Path.home() / '.claude/settings.json').read_text())
@@ -44,7 +44,15 @@ try:
         return result.returncode == 0
     def invokes_gate(command):
         args = shlex.split(command, posix=False)
-        if not args or not re.fullmatch(r'python(?:3(?:\.\d+)?)?', Path(args[0]).name):
+        if not args:
+            return False
+        interpreter = args[0]
+        if len(interpreter) >= 2 and interpreter[0] == interpreter[-1] and interpreter[0] in (chr(34), chr(39)):
+            interpreter = interpreter[1:-1]
+        if not re.fullmatch(r'python(?:3(?:\.\d+)?)?', Path(interpreter).name) or ("/" in interpreter and not Path(interpreter).is_absolute()):
+            return False
+        resolved = shutil.which(interpreter)
+        if resolved is None or not Path(resolved).is_file() or not os.access(resolved, os.X_OK):
             return False
         position = 1
         while position < len(args) and args[position] in ('-u', '-B', '-I', '-E', '-s', '-S', '-O', '-OO'):

@@ -21,6 +21,27 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_relative_git_and_wrapped_expanded_environment_are_guarded(self):
+        for executable in ("bin/git", "./bin/git", "../tools/git"):
+            self.assertEqual(
+                self.decision(executable + " push --force origin main"), "deny"
+            )
+        for wrapper in ("builtin", "command builtin", "builtin command"):
+            command = (
+                "cfg=GIT_CONFIG_COUNT; " + wrapper + ' export "$cfg=1"; '
+                "cfg=GIT_CONFIG_KEY_0; "
+                + wrapper
+                + ' export "$cfg=remote.origin.mirror"; '
+                "cfg=GIT_CONFIG_VALUE_0; "
+                + wrapper
+                + ' export "$cfg=true"; git push origin'
+            )
+            self.assertEqual(self.decision(command), "deny")
+        self.assertEqual(
+            self.decision("printf '%s' 'builtin export $cfg=1'; git push origin main"),
+            "allow",
+        )
+
     def test_general_non_git_substitutions_and_conditionals_are_allowed(self):
         for command in ('echo "$(date)"', "if test -f package.json; then npm test; fi"):
             with self.subTest(command=command):
@@ -445,6 +466,149 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_relative_git_commit_requires_compilation(self):
+        for hook in COMMIT_HOOKS:
+            for executable in ("bin/git", "./bin/git", "../tools/git"):
+                self.assertEqual(
+                    self.run_hook(
+                        hook,
+                        executable + " commit -am x",
+                        result=subprocess.CompletedProcess([], 1, "broken types", ""),
+                    ),
+                    (2, 1),
+                )
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                (root / "tsconfig.json").write_text("{}")
+                (root / "bin").mkdir()
+                import shutil
+
+                (root / "bin/git").symlink_to(shutil.which("git"))
+                payload = {
+                    "cwd": str(root),
+                    "tool_input": {"command": "bin/git commit -am x"},
+                }
+                with (
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch(
+                        "subprocess.run",
+                        return_value=subprocess.CompletedProcess(
+                            [], 1, "broken types", ""
+                        ),
+                    ) as compiler,
+                ):
+                    with self.assertRaises(SystemExit) as stopped:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(stopped.exception.code, 2)
+                self.assertEqual(compiler.call_args.kwargs["cwd"], str(root))
+
+    def test_all_leading_assignments_cannot_change_cdpath_target(self):
+        for hook in COMMIT_HOOKS:
+            self.assertEqual(
+                self.run_hook(
+                    hook, "UNUSED=1 CDPATH=/tmp printf '%s' cd; git commit -am x"
+                ),
+                (0, 1),
+            )
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                clean = root / "target"
+                broken = root / "other" / "target"
+                for repo in (clean, broken):
+                    repo.mkdir(parents=True)
+                    (repo / "tsconfig.json").write_text("{}")
+                payload = {
+                    "cwd": str(root),
+                    "tool_input": {
+                        "command": f"UNUSED=1 CDPATH={broken.parent}; cd target; git commit -am x"
+                    },
+                }
+
+                def compile_result(*args, **kwargs):
+                    return subprocess.CompletedProcess(
+                        [], 0 if Path(kwargs["cwd"]) == clean else 1, "fixture", ""
+                    )
+
+                with (
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch(
+                        "subprocess.run", side_effect=compile_result
+                    ) as compiler,
+                    mock.patch.dict(os.environ, {"CDPATH": ""}),
+                ):
+                    with self.assertRaises(SystemExit) as stopped:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(stopped.exception.code, 2)
+                compiler.assert_not_called()
+
+    def test_stored_core_worktree_compiles_actual_repository(self):
+        for hook in COMMIT_HOOKS:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                clean = root / "clean"
+                broken = root / "broken"
+                for repo in (clean, broken):
+                    repo.mkdir()
+                    (repo / "tsconfig.json").write_text("{}")
+                subprocess.run(["git", "init", "-q", str(clean)], check=True)
+                subprocess.run(
+                    ["git", "-C", str(clean), "config", "core.worktree", str(broken)],
+                    check=True,
+                )
+                payload = {
+                    "cwd": str(root),
+                    "tool_input": {"command": f"git -C {clean} commit -am x"},
+                }
+
+                def compile_result(*args, **kwargs):
+                    return subprocess.CompletedProcess(
+                        [], 0 if Path(kwargs["cwd"]) == clean else 1, "fixture", ""
+                    )
+
+                with (
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch(
+                        "subprocess.run", side_effect=compile_result
+                    ) as compiler,
+                ):
+                    with self.assertRaises(SystemExit) as stopped:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(stopped.exception.code, 2)
+                self.assertEqual(
+                    [call.kwargs["cwd"] for call in compiler.call_args_list],
+                    [str(broken)],
+                )
+
+    def test_unavailable_git_worktree_query_refuses_before_compiler(self):
+        for hook in COMMIT_HOOKS:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                (root / "tsconfig.json").write_text("{}")
+                payload = {
+                    "cwd": str(root),
+                    "tool_input": {"command": "git commit -am x"},
+                }
+                process = mock.Mock(returncode=0)
+                process.communicate.side_effect = [
+                    subprocess.TimeoutExpired(["git"], 3),
+                    ("", ""),
+                ]
+                with (
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch("subprocess.Popen", return_value=process) as query,
+                    mock.patch("subprocess.run") as compiler,
+                ):
+                    with self.assertRaises(SystemExit) as stopped:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(stopped.exception.code, 2)
+                compiler.assert_not_called()
+                process.kill.assert_called_once()
+                self.assertEqual(
+                    query.call_args.args[0][-2:], ["rev-parse", "--show-toplevel"]
+                )
+
     def test_general_unrelated_shell_syntax_is_not_a_git_operation(self):
         commands = (
             'echo "$(date)"',

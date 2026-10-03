@@ -49,7 +49,7 @@ def shell_continuations(command):
 
 
 def git_executable(word):
-    return word == "git" or (Path(word).is_absolute() and Path(word).name == "git")
+    return Path(word).name == "git"
 
 
 def shell_tokens(command):
@@ -712,6 +712,7 @@ def commit_directories(command, base):
             segment.append(word)
     segments.append((segment, conditional))
     targets = []
+    git_queries = {}
     directory = base
     uncertain_cwd = False
     for args, conditional in segments:
@@ -762,7 +763,7 @@ def commit_directories(command, base):
                 and any(word in ("cd", "pushd", "popd") for word in assigned_args[1:])
             ):
                 uncertain_cwd = True
-        if args[0].startswith("CDPATH=") or (
+        if not assigned_args and any(word.split("=", 1)[0] in ("CDPATH", "HOME", "OLDPWD", "PWD") or word.split("=", 1)[0].startswith("GIT_") for word in args[:assignment_count]) or (
             args[0] in ("builtin", "command")
             and any(word in ("cd", "pushd", "popd") for word in args[1:])
         ):
@@ -800,7 +801,7 @@ def commit_directories(command, base):
             continue
         target = directory
         worktree = None
-        gitdir = False
+        gitdir = None
         config_worktree = False
         position = 1
         while position < len(args):
@@ -826,7 +827,7 @@ def commit_directories(command, base):
                 elif flag == "--work-tree":
                     worktree = value
                 elif flag == "--git-dir":
-                    gitdir = True
+                    gitdir = value
                 elif flag == "-c":
                     config_worktree |= not value.lower().startswith("core.commentchar=")
                 position += 2
@@ -839,7 +840,7 @@ def commit_directories(command, base):
                 worktree = flag.split("=", 1)[1]
                 position += 1
             elif flag.startswith("--git-dir="):
-                gitdir = True
+                gitdir = flag.split("=", 1)[1]
                 position += 1
             elif flag.startswith("-c") and len(flag) > 2:
                 config_worktree |= not flag[2:].lower().startswith("core.commentchar=")
@@ -874,18 +875,52 @@ def commit_directories(command, base):
                 raise ValueError(
                     "use literal cd/Git options without pipes, subshells or background commands"
                 )
+            invocation_directory = target
             if worktree is not None:
                 target = (target / worktree).resolve()
             if not target.is_dir():
                 raise ValueError("commit directory does not exist")
             target_record = (target, worktree is not None)
+            query = ["git", "-C", str(invocation_directory)]
+            if gitdir is not None:
+                query += ["--git-dir", str((invocation_directory / gitdir).resolve())]
+            if worktree is not None:
+                query += ["--work-tree", str(target)]
+            git_queries[target_record] = query + ["rev-parse", "--show-toplevel"]
             if target_record not in targets:
                 targets.append(target_record)
     if len(targets) > 1:
         raise ValueError(
             "multiple distinct commit targets require separate hook invocations"
         )
-    return targets
+    resolved_targets = []
+    for target, explicit in targets:
+        invocation = Path(git_queries[(target, explicit)][2])
+        marker = next((path for path in (target, *target.parents, invocation, *invocation.parents) if (path / ".git").exists()), None)
+        # No discoverable repository has stored Git configuration to redirect this
+        # standalone compiler probe. Git itself will reject an actual commit there.
+        if marker is None and "--git-dir" not in git_queries[(target, explicit)]:
+            resolved_targets.append((target, explicit))
+            continue
+        process = subprocess.Popen(git_queries[(target, explicit)], stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True)
+        try:
+            stdout, stderr = process.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            raise ValueError("Git worktree query timed out")
+        if process.returncode or not stdout.strip() or len(stdout.splitlines()) != 1:
+            raise ValueError("actual Git worktree cannot be established")
+        actual = Path(stdout.strip()).resolve(strict=True)
+        if not actual.is_dir():
+            raise ValueError("actual Git worktree is not a directory")
+        # Preserve package/subdirectory selection within the verified worktree.
+        # Stored core.worktree may instead redirect to a separate directory.
+        if explicit or actual not in (target, *target.parents):
+            target, explicit = actual, True
+        resolved_targets.append((target, explicit))
+    return resolved_targets
 
 
 def typescript_directory(directory, explicit_worktree):

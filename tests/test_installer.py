@@ -307,6 +307,8 @@ chmod +x "$dest/install.sh"
             ("Bash", "python3 $HOME/.claude/hooks/commit-gate.py || true", 1),
             ("Bash", "python3 $HOME/.claude/hooks/commit-gate.py &", 1),
             ("Bash", "python3 $HOME/.claude/hooks/commit-gate.py; true", 1),
+            ("Bash", "/missing/python3 $HOME/.claude/hooks/commit-gate.py", 1),
+            ("Bash", "python3.999 $HOME/.claude/hooks/commit-gate.py", 1),
         ):
             with self.subTest(matcher=matcher, command=command):
                 original = json.dumps(
