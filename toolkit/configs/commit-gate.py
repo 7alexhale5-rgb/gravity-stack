@@ -320,14 +320,30 @@ def shell_tokens(command):
             if expanded:
                 return True
             name = word if word == "." else Path(word).name
-            if name == "[[":
+            if name in {"[[", "[", "test"}:
                 end = index
-                while end < len(words) and words[end].replace("\ue003", "") != "]]":
+                terminator = "]]" if name == "[[" else "]"
+                while end < len(words):
+                    token = words[end].replace("\ue003", "")
+                    if name != "test" and token == terminator:
+                        break
+                    if name == "test" and token and all(c in ";&|()<>\n" for c in token):
+                        break
                     end += 1
-                if end == len(words):
+                if name != "test" and end == len(words):
                     raise ValueError("unterminated conditional cannot be inspected")
                 operands = words[index:end]
                 for offset, operand in enumerate(operands):
+                    if operand.replace("\ue003", "") in {"-v", "-R"}:
+                        if offset + 1 == len(operands):
+                            raise ValueError("missing conditional variable target")
+                        target = operands[offset + 1].replace("\ue003", "")
+                        indexed = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\[(.*)\]", target)
+                        if indexed:
+                            if not literal_arithmetic(indexed.group(2)):
+                                raise ValueError("unresolved conditional variable index cannot be inspected")
+                        elif not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", target):
+                            raise ValueError("unresolved conditional variable target cannot be inspected")
                     if operand.replace("\ue003", "") in {
                         "-eq",
                         "-ne",
@@ -351,7 +367,7 @@ def shell_tokens(command):
                             raise ValueError(
                                 "unresolved conditional arithmetic cannot be inspected"
                             )
-                index = end + 1
+                index = end if name == "test" else end + 1
                 head = False
                 continue
             if name in {"declare", "typeset", "local", "export", "readonly", "unset"}:
@@ -711,7 +727,17 @@ def shell_tokens(command):
                         return True
                     if argument and all(c in ";&|()<>\n" for c in words[index]):
                         break
-                    if argument in ("-C", "-c", "--git-dir", "--work-tree"):
+                    if argument == "-c" or (argument.startswith("-c") and len(argument) > 2):
+                        value = argument[2:]
+                        if argument == "-c":
+                            if index + 1 >= len(words):
+                                raise ValueError("missing inline Git configuration")
+                            index += 1
+                            value = words[index].replace("\ue003", "")
+                        if "\ue002" in value or not value.lower().startswith("core.commentchar="):
+                            raise ValueError("inline Git configuration effects cannot be inspected")
+                        index += 1
+                    elif argument in ("-C", "--git-dir", "--work-tree"):
                         if index + 1 >= len(words) or "\ue002" in words[index + 1] or (words[index + 1] and all(c in ";&|()<>\n" for c in words[index + 1])):
                             return True
                         index += 2

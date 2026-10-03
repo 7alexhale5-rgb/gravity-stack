@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import shlex
 import shutil
 import subprocess
 import sys
@@ -496,6 +497,162 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_actual_inline_git_aliases_cannot_hide_guarded_operations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo = root / "repo"
+            repo.mkdir()
+            real_git = shutil.which("git")
+            fake = root / "fake-git"
+            log = root / "calls"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            subprocess.run(
+                [real_git, "init", str(repo)], check=True, capture_output=True
+            )
+            subprocess.run(
+                [real_git, "-C", str(repo), "config", "user.name", "Fixture"],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    real_git,
+                    "-C",
+                    str(repo),
+                    "config",
+                    "user.email",
+                    "fixture@example.invalid",
+                ],
+                check=True,
+            )
+            env = dict(os.environ, FAKE_GIT_LOG=str(log))
+            for attached in (False, True):
+                for wrapper in ("", "command "):
+                    value = "alias.ship=!" + str(fake) + " push --force origin main"
+                    args = (["-c" + value] if attached else ["-c", value]) + ["ship"]
+                    log.write_text("")
+                    executed = subprocess.run(
+                        [real_git, "-C", str(repo)] + args,
+                        env=env,
+                        capture_output=True,
+                        timeout=3,
+                    )
+                    if attached:
+                        # Git rejects attached -c; parser coverage remains conservative.
+                        self.assertNotEqual(executed.returncode, 0)
+                        self.assertEqual(log.read_text(), "")
+                    else:
+                        self.assertEqual(executed.returncode, 0, executed.stderr)
+                        self.assertIn("push --force origin main", log.read_text())
+                    command = wrapper + shlex.join(["git"] + args)
+                    with self.subTest(command=command):
+                        self.assertEqual(
+                            DestructiveHookTests().decision(command), "deny"
+                        )
+                (repo / "change.txt").write_text(str(attached))
+                subprocess.run([real_git, "-C", str(repo), "add", "."], check=True)
+                value = "alias.save=commit"
+                args = (["-c" + value] if attached else ["-c", value]) + [
+                    "save",
+                    "-m",
+                    "Fixture alias commit",
+                ]
+                executed = subprocess.run(
+                    [real_git, "-C", str(repo)] + args, capture_output=True, timeout=3
+                )
+                if attached:
+                    self.assertNotEqual(executed.returncode, 0)
+                else:
+                    self.assertEqual(executed.returncode, 0, executed.stderr)
+                command = shlex.join(["git"] + args)
+                with self.subTest(command=command):
+                    for hook in COMMIT_HOOKS:
+                        self.assertEqual(self.run_hook(hook, command), (2, 0))
+
+    def test_conditional_existence_array_indices_are_guarded(self):
+        for operation in ("commit -am broken", "push --force origin main"):
+            prefix = "a=(0); expression='a[$(git " + operation + "; printf 0)]'; "
+            for tail in (
+                "[[ -v 'a[expression]' ]]",
+                "[[ -R 'a[expression]' ]]",
+                "test -v 'a[expression]'",
+                "[ -v 'a[expression]' ]",
+                "builtin test -v 'a[expression]'",
+                "command [ -v 'a[expression]' ]",
+            ):
+                command = prefix + tail
+                with self.subTest(command=command):
+                    if operation.startswith("commit"):
+                        for hook in COMMIT_HOOKS:
+                            self.assertEqual(self.run_hook(hook, command), (2, 0))
+                    else:
+                        self.assertEqual(
+                            DestructiveHookTests().decision(command), "deny"
+                        )
+
+    def test_actual_bash4_conditional_existence_executes_fake_git(self):
+        candidates = [
+            os.environ.get("GRAVITY_TEST_BASH4"),
+            shutil.which("bash"),
+            "/opt/homebrew/bin/bash",
+            "/usr/local/bin/bash",
+            "/opt/local/bin/bash",
+        ]
+        bash4 = None
+        for candidate in candidates:
+            if candidate and Path(candidate).is_file():
+                version = subprocess.run(
+                    [candidate, "--version"], capture_output=True, text=True, timeout=3
+                ).stdout
+                if any(
+                    "version " + str(major) + "." in version for major in range(4, 10)
+                ):
+                    bash4 = candidate
+                    break
+        if not bash4:
+            self.skipTest(
+                "Bash4+ unavailable locally: array-existence runtime proof deferred; parser assertions still run"
+            )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake = root / "git"
+            log = root / "calls"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for operation in ("commit -am broken", "push --force origin main"):
+                prefix = "a=(0); expression='a[$(git " + operation + "; printf 0)]'; "
+                for tail in (
+                    "[[ -v 'a[expression]' ]]",
+                    "test -v 'a[expression]'",
+                    "[ -v 'a[expression]' ]",
+                    "builtin test -v 'a[expression]'",
+                ):
+                    command = prefix + tail
+                    log.write_text("")
+                    subprocess.run(
+                        [bash4, "-c", command], env=env, capture_output=True, timeout=3
+                    )
+                    self.assertIn(operation, log.read_text(), command)
+
+    def test_literal_conditional_lookups_and_comment_config_remain_allowed(self):
+        for command in (
+            "[[ -v 'a[0]' ]]",
+            "test -v 'a[0]'",
+            "builtin [ -v name ]",
+            "[[ -R name ]]",
+            "git -c core.commentChar='#' status",
+            "git -ccore.commentChar=';' status",
+            "echo '[[ -v a[expression] ]]'",
+        ):
+            for hook in COMMIT_HOOKS:
+                self.assertEqual(self.run_hook(hook, command), (0, 0), command)
+            self.assertEqual(DestructiveHookTests().decision(command), "allow", command)
+
     def test_actual_read_arithmetic_destinations_are_guarded(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
