@@ -54,6 +54,39 @@ def git_executable(word):
 
 def shell_tokens(command):
     """Keep literal punctuation distinct from shell operators after decoding."""
+
+    def harmless_shell_diagnostic(command):
+        """Recognize a small literal builtin grammar, without executing its input."""
+        if re.fullmatch(r"\s*echo\s+\"\$\(\s*pwd\s*\)\"\s*", command):
+            return True
+        if any(char in command for char in "$`\\"):
+            return False
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
+        lexer.whitespace = " \t\r"
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        at_head = True
+        seen_builtin = False
+        try:
+            for word in lexer:
+                if word in (";", "&&", "||", "\n"):
+                    at_head = True
+                elif at_head and word in ("if", "then", "else", "elif", "fi"):
+                    continue
+                elif at_head:
+                    if word not in ("echo", "printf", "pwd", "true", "false", ":"):
+                        return False
+                    seen_builtin = True
+                    at_head = False
+                elif all(char in ";&|()<>\n" for char in word):
+                    return False
+        except ValueError:
+            return False
+        return seen_builtin
+
+    if harmless_shell_diagnostic(command):
+        return []
+
     shells = {
         "bash",
         "sh",
@@ -85,6 +118,10 @@ def shell_tokens(command):
                 at_head = True
                 wrapped = False
             elif at_head:
+                if getattr(word, "expanded", False) and not re.match(
+                    r"^[A-Za-z_][A-Za-z0-9_]*=", word
+                ):
+                    raise ValueError("expanded executable cannot be inspected")
                 if word in {
                     "if",
                     "then",
@@ -299,7 +336,16 @@ def shell_tokens(command):
     # Only executable wrapper arguments and pipeline inputs are shell programs;
     # search patterns and printed strings containing Git commands are ordinary data.
     group = []
+    pipeline_pending = False
     for word, operator in tokens + [(";", True)]:
+        if operator and word.replace("\n", "") in ("|", "|&"):
+            group.append((word, operator))
+            pipeline_pending = True
+            continue
+        if operator and not word.replace("\n", "") and pipeline_pending:
+            group.append((word, operator))
+            continue
+        pipeline_pending = False
         if (
             operator
             and word not in ("|", "|&")
@@ -338,44 +384,9 @@ def shell_tokens(command):
     return tokens
 
 
-def harmless_shell_diagnostic(command):
-    """Recognize a small literal builtin grammar, without executing its input."""
-    if re.fullmatch(r'\s*echo\s+"\$\(\s*pwd\s*\)"\s*', command):
-        return True
-    if any(char in command for char in "$`\\"):
-        return False
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
-    lexer.whitespace = " \t\r"
-    lexer.whitespace_split = True
-    lexer.commenters = ""
-    at_head = True
-    seen_builtin = False
-    try:
-        for word in lexer:
-            if word in (";", "&&", "||", "\n"):
-                at_head = True
-            elif at_head and word in ("if", "then", "else", "elif", "fi"):
-                continue
-            elif at_head:
-                if word not in ("echo", "printf", "pwd", "true", "false", ":"):
-                    return False
-                seen_builtin = True
-                at_head = False
-            elif all(char in ";&|()<>\n" for char in word):
-                return False
-    except ValueError:
-        return False
-    return seen_builtin
-
-
 def commit_directories(command, base):
     """Resolve literal cd/Git options; never execute the submitted shell command."""
-    try:
-        tokens = shell_tokens(command)
-    except ValueError:
-        if harmless_shell_diagnostic(command):
-            return []
-        raise
+    tokens = shell_tokens(command)
     at_head = True
     for word, operator in tokens:
         if operator:

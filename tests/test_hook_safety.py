@@ -30,6 +30,21 @@ class DestructiveHookTests(unittest.TestCase):
         ):
             self.assertEqual(self.decision(command), "deny")
 
+    def test_multiline_pipeline_and_expanded_executable_refuse(self):
+        for pipe in ("|", "|&"):
+            for gap in ("\n", "\n\n"):
+                self.assertEqual(
+                    self.decision(
+                        "printf '%s' '\"git\" push --force origin main' "
+                        + pipe
+                        + gap
+                        + "bash"
+                    ),
+                    "deny",
+                )
+        self.assertEqual(self.decision("$'git' push --force origin main"), "deny")
+        self.assertEqual(self.decision("printf '%s' '$git'"), "allow")
+
     def test_quoted_git_inside_executable_backticks_refuses(self):
         self.assertEqual(self.decision('echo `"git" push --force origin main`'), "deny")
         self.assertEqual(
@@ -413,6 +428,18 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_multiline_pipeline_refuses(self):
+        for hook in COMMIT_HOOKS:
+            for pipe in ("|", "|&"):
+                for gap in ("\n", "\n\n"):
+                    self.assertEqual(
+                        self.run_hook(
+                            hook,
+                            "printf '%s' '\"git\" commit -am x' " + pipe + gap + "bash",
+                        ),
+                        (2, 0),
+                    )
+
     def test_unrelated_literal_diagnostics_and_conditionals_remain_usable(self):
         for hook in COMMIT_HOOKS:
             for command in (
