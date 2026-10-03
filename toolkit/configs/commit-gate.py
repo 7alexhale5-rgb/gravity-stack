@@ -60,6 +60,7 @@ def shell_tokens(command):
     marked = []
     quote = ""
     escaped = False
+    substitution = False
     for char in shell_continuations(command):
         if escaped:
             escaped = False
@@ -68,12 +69,18 @@ def shell_tokens(command):
                 marked.append(marker)
             escaped = True
         elif quote:
+            if char == "`" and quote == chr(34):
+                substitution = True
             if char == quote:
                 quote = ""
         elif char in (chr(39), chr(34)):
             quote = char
             marked.append(marker)
+        elif char == "`":
+            substitution = True
         marked.append(char)
+    if substitution and re.search(r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\b(?:push|commit)\b", shell_continuations(command)):
+        raise ValueError("Git command substitution cannot be inspected")
     lexer = shlex.shlex("".join(marked), posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
@@ -90,7 +97,9 @@ def commit_directories(command, base):
     if any(
         not operator
         and not git_executable(word)
-        and re.search(r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\bcommit\b", shell_continuations(word))
+        and re.search(
+            r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\bcommit\b", shell_continuations(word)
+        )
         for word, operator in tokens
     ):
         raise ValueError(
@@ -201,9 +210,36 @@ def commit_directories(command, base):
                 target = (target / worktree).resolve()
             if not target.is_dir():
                 raise ValueError("commit directory does not exist")
-            if target not in targets:
-                targets.append(target)
+            target_record = (target, worktree is not None)
+            if target_record not in targets:
+                targets.append(target_record)
+    if len(targets) > 1:
+        raise ValueError(
+            "multiple distinct commit targets require separate hook invocations"
+        )
     return targets
+
+
+def typescript_directory(directory, explicit_worktree):
+    """Find the nearest TS project, bounded by a worktree marker or explicit root."""
+    ancestors = (directory, *directory.parents)
+    boundary = (
+        directory
+        if explicit_worktree
+        else next(
+            (candidate for candidate in ancestors if (candidate / ".git").exists()),
+            None,
+        )
+    )
+    # Without a worktree boundary, do not inspect unrelated parent projects.
+    if boundary is None:
+        return directory if (directory / "tsconfig.json").is_file() else None
+    for candidate in ancestors:
+        if (candidate / "tsconfig.json").is_file():
+            return candidate
+        if candidate == boundary:
+            break
+    return None
 
 
 try:
@@ -220,8 +256,9 @@ except (ValueError, OSError) as error:
     print(f"COMMIT BLOCKED: directory check unavailable ({error})", file=sys.stderr)
     sys.exit(2)
 
-for directory in directories:
-    if not (directory / "tsconfig.json").is_file():
+for target, explicit_worktree in directories:
+    directory = typescript_directory(target, explicit_worktree)
+    if directory is None:
         continue
     try:
         check = subprocess.run(

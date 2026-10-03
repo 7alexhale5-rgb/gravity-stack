@@ -100,7 +100,7 @@ Knowledge graph memory server for persistent entity and relationship storage.
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-memory@2026.1.26"],
       "env": {
-        "MEMORY_FILE_PATH": "~/.claude/memory/knowledge-graph.json"
+        "MEMORY_FILE_PATH": "/absolute/path/to/memory/graph.json"
       }
     }
   }
@@ -204,82 +204,10 @@ crawl4ai serve --port 11235
 
 ## Cloud Servers
 
-These servers connect to cloud services and are configured with OAuth or API keys.
-
-### Gmail
-
-Read and send emails through Gmail.
-
-```json
-{
-  "mcpServers": {
-    "gmail": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-gmail"],
-      "env": {
-        "GOOGLE_CLIENT_ID": "your-client-id",
-        "GOOGLE_CLIENT_SECRET": "your-client-secret",
-        "GOOGLE_REFRESH_TOKEN": "your-refresh-token"
-      }
-    }
-  }
-}
-```
-
-**Tools provided**: `search_emails`, `read_email`, `send_email`, `list_labels`
-
-**Requirements**: Google Cloud project with Gmail API enabled. OAuth 2.0 credentials.
-
----
-
-### Google Calendar
-
-Manage calendar events and schedules.
-
-```json
-{
-  "mcpServers": {
-    "google-calendar": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-google-calendar"],
-      "env": {
-        "GOOGLE_CLIENT_ID": "your-client-id",
-        "GOOGLE_CLIENT_SECRET": "your-client-secret",
-        "GOOGLE_REFRESH_TOKEN": "your-refresh-token"
-      }
-    }
-  }
-}
-```
-
-**Tools provided**: `list_events`, `create_event`, `update_event`, `delete_event`
-
-**Requirements**: Google Cloud project with Calendar API enabled. OAuth 2.0 credentials (can share credentials with Gmail).
-
----
-
-### Slack
-
-Interact with Slack workspaces.
-
-```json
-{
-  "mcpServers": {
-    "slack": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-slack"],
-      "env": {
-        "SLACK_BOT_TOKEN": "xoxb-your-token",
-        "SLACK_TEAM_ID": "T0123456789"
-      }
-    }
-  }
-}
-```
-
-**Tools provided**: `send_message`, `read_channel`, `list_channels`, `search_messages`
-
-**Requirements**: Slack app with Bot token. Create at [api.slack.com/apps](https://api.slack.com/apps).
+Gmail, Calendar and Slack are optional integrations. The previously listed npm
+packages were unverified and are not installation instructions. Select a supported
+connector in the host's integration settings, complete its authorization, and prove
+actual access. These services are not registered by the core toolkit installer.
 
 ---
 
@@ -305,7 +233,9 @@ free fallback. Canonical list, detection rules and fallbacks: research-stack `re
 
 ## Full Configuration Example
 
-Here is a complete `mcpServers` block with all 10 servers:
+Here is a complete project `.mcp.json` block for the seven local core registrations.
+Cloud integrations use the host settings and are omitted from this JSON.
+Replace the memory file placeholder with an absolute path before use.
 
 ```json
 {
@@ -332,7 +262,7 @@ Here is a complete `mcpServers` block with all 10 servers:
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-memory@2026.1.26"],
       "env": {
-        "MEMORY_FILE_PATH": "~/.claude/memory/knowledge-graph.json"
+        "MEMORY_FILE_PATH": "/absolute/path/to/memory/graph.json"
       }
     },
     "hackernews": {
@@ -346,32 +276,6 @@ Here is a complete `mcpServers` block with all 10 servers:
     "crawl4ai": {
       "type": "sse",
       "url": "http://localhost:11235/sse"
-    },
-    "gmail": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-gmail"],
-      "env": {
-        "GOOGLE_CLIENT_ID": "xxx",
-        "GOOGLE_CLIENT_SECRET": "xxx",
-        "GOOGLE_REFRESH_TOKEN": "xxx"
-      }
-    },
-    "google-calendar": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-google-calendar"],
-      "env": {
-        "GOOGLE_CLIENT_ID": "xxx",
-        "GOOGLE_CLIENT_SECRET": "xxx",
-        "GOOGLE_REFRESH_TOKEN": "xxx"
-      }
-    },
-    "slack": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-slack"],
-      "env": {
-        "SLACK_BOT_TOKEN": "xoxb-xxx",
-        "SLACK_TEAM_ID": "Txxx"
-      }
     }
   }
 }

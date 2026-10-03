@@ -79,6 +79,7 @@ def shell_tokens(command):
     marked = []
     quote = ""
     escaped = False
+    substitution = False
     for char in shell_continuations(command):
         if escaped:
             escaped = False
@@ -87,12 +88,18 @@ def shell_tokens(command):
                 marked.append(marker)
             escaped = True
         elif quote:
+            if char == "`" and quote == chr(34):
+                substitution = True
             if char == quote:
                 quote = ""
         elif char in (chr(39), chr(34)):
             quote = char
             marked.append(marker)
+        elif char == "`":
+            substitution = True
         marked.append(char)
+    if substitution and re.search(r"(?:^|[^A-Za-z0-9_.-])git\s+[^;\n]*\b(?:push|commit)\b", shell_continuations(command)):
+        raise ValueError("Git command substitution cannot be inspected")
     lexer = shlex.shlex("".join(marked), posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
@@ -170,6 +177,8 @@ for index, (word, operator) in enumerate(tokens):
             deny("unprotected force push")
         elif arg == "--force-with-lease" or arg.startswith("--force-with-lease="):
             lease = True
+        elif arg == "--prune":
+            deny("pruning can delete protected remote refs; use explicit reviewed ref updates")
         elif arg in ("--all", "--tags", "--follow-tags", "--prune", "--delete", "-d"):
             all_refs = True
             delete_refs |= arg in ("--delete", "-d")
@@ -189,7 +198,11 @@ for index, (word, operator) in enumerate(tokens):
     deletion_candidates = positionals if remote_option else positionals[1:]
     for ref in deletion_candidates:
         if delete_refs or ref.startswith(":"):
-            destination = ref.split(":")[-1].removeprefix("refs/heads/")
+            destination = ref.split(":")[-1]
+            for prefix in ("refs/heads/", "heads/", "refs/"):
+                if destination.startswith(prefix):
+                    destination = destination.removeprefix(prefix)
+                    break
             if destination in ("main", "master", "HEAD"):
                 deny("deletion of a protected branch")
     if not lease:

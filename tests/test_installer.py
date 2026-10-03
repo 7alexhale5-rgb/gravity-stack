@@ -293,6 +293,8 @@ chmod +x "$dest/install.sh"
         store = self.home / ".claude/settings.json"
         for matcher, command, expected in (
             ("^Bash$", "python3 $HOME/.claude/hooks/commit-gate.py", 0),
+            ("Bash,Read", "python3 $HOME/.claude/hooks/commit-gate.py", 1),
+            ("Bash ", "python3 $HOME/.claude/hooks/commit-gate.py", 1),
             ("Bash|Read", "python3 $HOME/.claude/hooks/commit-gate.py", 0),
             ("Bash", "python3 ~/.claude/hooks/commit-gate.py", 0),
             ("Bash", f"python3 {self.home}/.claude/hooks/commit-gate.py", 0),
@@ -302,6 +304,9 @@ chmod +x "$dest/install.sh"
             ("[", "python3 $HOME/.claude/hooks/commit-gate.py", 1),
             ("Bash", "echo $HOME/.claude/hooks/commit-gate.py", 1),
             ("Bash", "python3 $HOME/.claude/hooks/commit-gate.py.bak", 1),
+            ("Bash", "python3 $HOME/.claude/hooks/commit-gate.py || true", 1),
+            ("Bash", "python3 $HOME/.claude/hooks/commit-gate.py &", 1),
+            ("Bash", "python3 $HOME/.claude/hooks/commit-gate.py; true", 1),
         ):
             with self.subTest(matcher=matcher, command=command):
                 original = json.dumps(

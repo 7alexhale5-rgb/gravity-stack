@@ -7,7 +7,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Copy commit-gate.py
 if [ -f "$HOME/.claude/hooks/commit-gate.py" ]; then
-  echo -e "  ${GREEN}✓${NC} commit-gate.py already installed"
+  if cmp -s "$SCRIPT_DIR/configs/commit-gate.py" "$HOME/.claude/hooks/commit-gate.py"; then
+    echo -e "  ${GREEN}✓${NC} current commit-gate.py already installed"
+  else
+    echo "  Existing commit-gate.py differs from the bundled version; preserve it and review an update before replacement."
+  fi
 else
   cp "$SCRIPT_DIR/configs/commit-gate.py" "$HOME/.claude/hooks/commit-gate.py"
   chmod +x "$HOME/.claude/hooks/commit-gate.py"

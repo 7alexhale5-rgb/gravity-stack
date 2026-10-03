@@ -35,8 +35,8 @@ try:
         # Claude uses exact alternatives or JavaScript RegExp.test, not Python regex.
         if matcher in ('', '*'):
             return True
-        if re.fullmatch(r'[A-Za-z0-9_ ,|\-]+', matcher):
-            return any(name.strip() == 'Bash' for name in re.split(r'[|,]', matcher))
+        if re.fullmatch(r'[A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*', matcher):
+            return 'Bash' in matcher.split('|')
         script = "try {process.exit(new RegExp(process.argv[1]).test('Bash')?0:1)} catch {process.exit(2)}"
         result = subprocess.run(['node', '-e', script, matcher], capture_output=True, timeout=5)
         if result.returncode == 2:
@@ -59,7 +59,9 @@ try:
             '~/' + relative, '$HOME/' + relative, '${HOME}/' + relative,
             '"$HOME/' + relative + '"', '"${HOME}/' + relative + '"',
         }
-        return position < len(args) and args[position] in supported
+        # The gate accepts no script arguments or shell composition. Suffixes can
+        # mask its blocking exit status or run it in the background.
+        return position == len(args) - 1 and args[position] in supported
     registered = False
     for group in settings.get('hooks', {}).get('PreToolUse', []):
         if not matches_bash(group.get('matcher', '')):
@@ -100,7 +102,9 @@ if [ "$FAIL" -eq 0 ]; then
   echo -e "\n${GREEN}${BOLD}Status: FOUNDATION AND COMMIT REGISTRATION CHECKS PASSED${NC}"
 else
   echo -e "\n${RED}${BOLD}Status: ${FAIL} CHECK(S) FAILED${NC}"
-  echo "  Run individual phase scripts to fix issues."
+  echo "  For commit-gate failures, preserve your existing gate, compare it with toolkit/configs/commit-gate.py, and install the reviewed current version."
+  echo '  Set only that PreToolUse command hook to "timeout": 70; keep its blocking exit status (no || true).'
+  echo "  Existing settings and gate files are preserved; rerunning setup alone does not update them."
   exit 1
 fi
 

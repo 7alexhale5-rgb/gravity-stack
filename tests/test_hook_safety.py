@@ -21,6 +21,34 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_backtick_wrapped_push_is_not_a_literal_git_command(self):
+        for command in (
+            "echo `git push --force origin main`",
+            "`git push --force origin main`",
+            'echo "`git push --force origin main`"',
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+
+    def test_dwim_protected_branch_deletion_is_denied(self):
+        for command in (
+            "git push origin :heads/main",
+            "git push origin --delete heads/master",
+            "git push origin :refs/main",
+            "git push origin --delete refs/master",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+
+    def test_pruning_cannot_delete_unknown_or_protected_remote_refs(self):
+        for command in (
+            "git push --prune origin 'refs/heads/*:refs/heads/*'",
+            "git push origin --prune",
+            "git push --prune origin feature:refs/heads/feature",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "deny")
+
     def test_quoted_shell_wrappers_cannot_hide_git_push(self):
         for command in (
             "bash -c 'git push --force origin main'",
@@ -241,6 +269,96 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_backtick_wrapped_commit_cannot_hide_compilation_gate(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "`git commit -m x`",
+                "echo `git commit -m x`",
+                'echo "`git commit -m x`"',
+            ):
+                with self.subTest(hook=hook, command=command):
+                    self.assertEqual(self.run_hook(hook, command), (2, 0))
+
+    def test_commit_from_docs_checks_typescript_ancestor_inside_worktree(self):
+        for hook in COMMIT_HOOKS:
+            with self.subTest(hook=hook), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                (root / "tsconfig.json").write_text("{}")
+                (root / "docs").mkdir()
+                payload = {
+                    "cwd": str(root),
+                    "tool_input": {"command": "cd docs && git commit -m test"},
+                }
+                with (
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch(
+                        "subprocess.run",
+                        return_value=subprocess.CompletedProcess(
+                            [], 1, "failing root types", ""
+                        ),
+                    ) as compiler,
+                    mock.patch.object(sys, "stderr", io.StringIO()),
+                ):
+                    with self.assertRaises(SystemExit) as exit:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(exit.exception.code, 2)
+                self.assertEqual(
+                    [call.kwargs["cwd"] for call in compiler.call_args_list],
+                    [str(root)],
+                )
+
+    def test_typescript_ancestor_lookup_does_not_leave_nested_worktree(self):
+        for hook in COMMIT_HOOKS:
+            with self.subTest(hook=hook), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                (root / "tsconfig.json").write_text("{}")
+                repo = root / "nested"
+                subprocess.run(["git", "init", "-q", str(repo)], check=True)
+                (repo / "docs").mkdir()
+                payload = {
+                    "cwd": str(repo),
+                    "tool_input": {"command": "cd docs && git commit -m test"},
+                }
+                with (
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch("subprocess.run") as compiler,
+                ):
+                    with self.assertRaises(SystemExit) as exit:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(exit.exception.code, 0)
+                compiler.assert_not_called()
+
+    def test_multiple_distinct_commit_targets_refuse_before_any_compiler(self):
+        for hook in COMMIT_HOOKS:
+            with self.subTest(hook=hook), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                for name in ("first", "second"):
+                    (root / name).mkdir()
+                    (root / name / "tsconfig.json").write_text("{}")
+                payload = {
+                    "cwd": str(root),
+                    "tool_input": {
+                        "command": "git -C first commit -m one && git -C second commit -m two"
+                    },
+                }
+                with (
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch(
+                        "subprocess.run",
+                        return_value=subprocess.CompletedProcess([], 0, "", ""),
+                    ) as compiler,
+                    mock.patch.object(sys, "stderr", io.StringIO()),
+                ):
+                    with self.assertRaises(SystemExit) as exit:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(exit.exception.code, 2)
+                compiler.assert_not_called()
+            self.assertEqual(
+                self.run_hook(hook, "git commit -m one && git -C . commit -m two"),
+                (0, 1),
+            )
+
     def test_quoted_shell_wrappers_cannot_hide_compilation_gate(self):
         for hook in COMMIT_HOOKS:
             for command in (
@@ -338,6 +456,7 @@ class CommitGateTests(unittest.TestCase):
         self.assertEqual(COMMIT_HOOKS[0].read_bytes(), COMMIT_HOOKS[1].read_bytes())
 
     def test_three_tokenizer_copies_have_matching_behavior(self):
+        import re
         import shlex
 
         sources = [hook.read_text() for hook in COMMIT_HOOKS]
@@ -356,7 +475,7 @@ class CommitGateTests(unittest.TestCase):
                 and node.name
                 in {"shell_continuations", "git_executable", "shell_tokens"}
             ]
-            namespace = {"Path": Path, "shlex": shlex}
+            namespace = {"Path": Path, "shlex": shlex, "re": re}
             exec(
                 compile(
                     ast.Module(body=functions, type_ignores=[]),
@@ -375,11 +494,25 @@ class CommitGateTests(unittest.TestCase):
             "bash -c 'git commit -m test'",
             "git status # comment\ntrue",
             "git \\\nstatus",
+            "echo `git push origin main`",
+            "`git commit -m x`",
+            'echo "`git commit -m x`"',
+            "echo 'literal `date`'",
+            r"echo \`date\`",
         ):
             with self.subTest(command=command):
-                outputs = [tokenizer(command) for tokenizer in tokenizers]
+                outputs = []
+                for tokenizer in tokenizers:
+                    try:
+                        outputs.append(tokenizer(command))
+                    except ValueError as error:
+                        outputs.append(("error", str(error)))
                 self.assertEqual(outputs[0], outputs[1])
                 self.assertEqual(outputs[0], outputs[2])
+                if command.startswith("echo 'literal") or command.startswith(
+                    r"echo \`"
+                ):
+                    self.assertNotEqual(outputs[0][0], "error")
 
     def run_hook(self, hook, command, result=None, error=None, with_tsconfig=True):
         with tempfile.TemporaryDirectory(prefix="gravity-hook-") as directory:
@@ -457,9 +590,7 @@ class CommitGateTests(unittest.TestCase):
                         with self.assertRaises(SystemExit) as exit:
                             runpy.run_path(str(hook), run_name="__main__")
                     self.assertEqual(exit.exception.code, 2)
-                    expected = (
-                        [str(site), str(second)] if form == "multiple" else [str(site)]
-                    )
+                    expected = [] if form == "multiple" else [str(site)]
                     self.assertEqual(
                         [call.kwargs["cwd"] for call in compiler.call_args_list],
                         expected,

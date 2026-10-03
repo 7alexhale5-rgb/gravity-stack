@@ -95,3 +95,8 @@ configuration can add force or mirror behavior. The hook does not resolve stored
 configuration; branch protections and server-side policy remain necessary.
 Keep credentials outside tracked settings and process arguments. Review optional model calls
 against your data rules and budget before enabling them.
+
+The bundled commit guard refuses multiple distinct commit destinations in one shell
+command before compiling; split those commits into separate commands. Repeated
+commits to one destination compile once within the 60-second compiler limit and
+70-second hook deadline. Pruning pushes are conservatively refused.
