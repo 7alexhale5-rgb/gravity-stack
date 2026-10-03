@@ -495,6 +495,119 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_arithmetic_quotes_do_not_hide_executed_git_substitutions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake = root / "git"
+            log = root / "calls"
+            fake.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\nprintf "1"\n'
+            )
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for git in ("git commit -am broken", "git push --force origin main"):
+                for template in (
+                    "echo $(( '$(%s)' ))",
+                    "echo $(( $(%s) + 1 ))",
+                    "echo $(( 'nested$(%s)' ))",
+                    "echo $(( ')$(%s)' ))",
+                    "echo $(( '($( %s ))' ))",
+                ):
+                    command = template % git
+                    log.write_text("")
+                    subprocess.run(
+                        ["bash", "-c", command], env=env, capture_output=True, timeout=2
+                    )
+                    self.assertIn(git[4:], log.read_text())
+                    if "commit" in git:
+                        for hook in COMMIT_HOOKS:
+                            with self.subTest(command=command, hook=hook):
+                                self.assertEqual(self.run_hook(hook, command), (2, 0))
+                    else:
+                        with self.subTest(command=command):
+                            self.assertEqual(
+                                DestructiveHookTests().decision(command), "deny"
+                            )
+            for command in (
+                "echo $((1 << 2))",
+                "echo $(( $(date +%s) + 1 ))",
+                "echo '$(( $(git commit -am literal) ))'",
+            ):
+                for hook in COMMIT_HOOKS:
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+
+    def test_standalone_xdg_assignment_cannot_redirect_git_configuration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            clean, broken, original, alternate, home = [
+                root / name
+                for name in ("clean", "broken", "original", "alternate", "home")
+            ]
+            for directory in (clean, broken, original, alternate / "git", home):
+                directory.mkdir(parents=True)
+            for directory in (clean, broken):
+                (directory / "tsconfig.json").write_text("{}")
+            subprocess.run(["git", "init", "-q", str(clean)], check=True)
+            (alternate / "git" / "config").write_text(
+                "[core]\nworktree = " + str(broken) + "\n"
+            )
+            env = {"XDG_CONFIG_HOME": str(original), "HOME": str(home)}
+            effective = subprocess.check_output(
+                ["git", "-C", str(clean), "config", "--get", "core.worktree"],
+                env=dict(dict(os.environ, **env), XDG_CONFIG_HOME=str(alternate)),
+                text=True,
+            ).rstrip("\n")
+            self.assertEqual(effective, str(broken))
+            for hook in COMMIT_HOOKS:
+                payload = {
+                    "cwd": str(clean),
+                    "tool_input": {
+                        "command": "XDG_CONFIG_HOME="
+                        + str(alternate)
+                        + "; git commit -am broken"
+                    },
+                }
+                with (
+                    mock.patch.dict(os.environ, env),
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
+                    mock.patch(
+                        "subprocess.run",
+                        return_value=subprocess.CompletedProcess([], 0, "", ""),
+                    ) as compiler,
+                ):
+                    with self.assertRaises(SystemExit) as stopped:
+                        runpy.run_path(str(hook), run_name="__main__")
+                self.assertEqual(stopped.exception.code, 2)
+                compiler.assert_not_called()
+
+    def test_invalid_utf8_compiler_failure_remains_blocking(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root / "tsconfig.json").write_text("{}")
+            executable = root / "npx"
+            executable.write_text('#!/bin/sh\nprintf "\\377" >&2\nexit 1\n')
+            executable.chmod(0o755)
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"])
+            payload = json.dumps(
+                {"cwd": str(root), "tool_input": {"command": "git commit -am broken"}}
+            )
+            for hook in COMMIT_HOOKS:
+                result = subprocess.run(
+                    [sys.executable, str(hook)],
+                    input=payload.encode(),
+                    env=env,
+                    capture_output=True,
+                    timeout=5,
+                )
+                self.assertEqual(
+                    result.returncode, 2, result.stderr.decode(errors="replace")
+                )
+                self.assertIn(b"TypeScript check failed", result.stderr)
+
     def test_coproc_and_control_prefixes_cannot_hide_guarded_work(self):
         destructive = DestructiveHookTests()
         for template in (
@@ -1864,6 +1977,12 @@ class CommitGateTests(unittest.TestCase):
             tokenizers.append(namespace["shell_tokens"])
         for command in (
             "git status &&\ncd docs; git commit -m test",
+            "echo $(( '$(git commit -am broken)' ))",
+            "echo $(( ')$(git push --force origin main)' ))",
+            "echo $((1 << 2))",
+            "echo $(( $(date +%s) + 1 ))",
+            "echo '$(( $(git commit -am literal) ))'",
+            "XDG_CONFIG_HOME=/alternate; git commit -am broken",
             "coproc git commit -am broken",
             "coproc WORK { git push --force origin main; }",
             "coproc WORK { echo healthy; }",

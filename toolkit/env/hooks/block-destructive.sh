@@ -102,6 +102,45 @@ def shell_tokens(command):
                     quote = ""
                 position += 1
                 continue
+            if text.startswith("$((", position):
+                # Arithmetic quotes do not prevent command substitution. Inspect
+                # its entire body under arithmetic expansion rules before any
+                # ordinary-shell no-Git fast path can discard the expression.
+                beginning = position + 3
+                ending = beginning
+                balance = 2
+                arithmetic_quote = ""
+                while ending < len(text):
+                    current = text[ending]
+                    if current == "\\":
+                        ending += 2
+                        continue
+                    # Quotes delimit literal parentheses, but the subsequent
+                    # expansion inspection deliberately ignores their shielding.
+                    if arithmetic_quote:
+                        if current == arithmetic_quote:
+                            arithmetic_quote = ""
+                    elif current in (chr(39), chr(34)):
+                        arithmetic_quote = current
+                    elif current == "(":
+                        balance += 1
+                    elif current == ")":
+                        balance -= 1
+                        if not balance:
+                            break
+                    ending += 1
+                if ending >= len(text):
+                    raise ValueError("unterminated arithmetic expansion")
+                _, guarded = inspect_substitutions(
+                    text[beginning : ending - 1], depth + 1, quote_sensitive=False
+                )
+                if guarded:
+                    raise ValueError(
+                        "guarded arithmetic substitution cannot be inspected"
+                    )
+                rewritten.append("\ue002ARITHMETIC")
+                position = ending + 1
+                continue
             opening = text[position : position + 2]
             substitution = opening in ("$(", "<(", ">(") and not text.startswith(
                 "$((", position
