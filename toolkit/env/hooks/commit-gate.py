@@ -309,6 +309,76 @@ def shell_tokens(command):
                 else:
                     return True
                 continue
+            if name in {"nice", "nohup", "timeout", "sudo", "setsid", "stdbuf", "chrt", "ionice", "taskset", "doas", "runuser", "xargs", "watch"}:
+                # These programs execute a child. Keep their child executable
+                # visible before the unrelated-command fast path. We refuse
+                # guarded children rather than guessing altered cwd/env/options.
+                operands = {
+                    "nice": {"-n", "--adjustment"},
+                    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+                    "sudo": {"-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-C", "--close-from", "-T", "--command-timeout", "-R", "--chroot", "-D", "--chdir"},
+                    "stdbuf": {"-i", "--input", "-o", "--output", "-e", "--error"},
+                    "chrt": {"-T", "--sched-runtime", "-P", "--sched-period", "-D", "--sched-deadline"},
+                    "ionice": {"-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "--pgid", "-u", "--uid"},
+                    "doas": {"-u", "-C"},
+                    "runuser": {"-u", "--user", "-g", "--group", "-G", "--supp-group"},
+                    "xargs": {"-I", "--replace", "-L", "--max-lines", "-n", "--max-args", "-P", "--max-procs", "-s", "--max-chars", "-E", "--eof", "-d", "--delimiter", "-a", "--arg-file"},
+                    "watch": {"-n", "--interval"},
+                }.get(name, set())
+                child = index
+                unresolved = False
+                while child < len(words):
+                    option = words[child].replace("\ue003", "")
+                    if "\ue002" in option or (option and all(c in ";&|()<>\n" for c in option)):
+                        unresolved = True
+                        break
+                    if option == "--":
+                        child += 1
+                        break
+                    if not option.startswith("-") or option == "-":
+                        break
+                    child += 1
+                    if option in operands:
+                        if child >= len(words) or "\ue002" in words[child] or all(c in ";&|()<>\n" for c in words[child]):
+                            unresolved = True
+                            break
+                        child += 1
+                    elif option in {"--help", "--version"} or option in {
+                        "timeout": {"--foreground", "--preserve-status", "-v", "--verbose"},
+                        "sudo": {"-n", "--non-interactive", "-E", "--preserve-env", "-H", "--set-home", "-S", "--stdin", "-b", "--background", "-i", "--login", "-s", "--shell"},
+                        "setsid": {"-f", "--fork", "-w", "--wait", "-c", "--ctty"},
+                        "chrt": {"-p", "--pid", "-a", "--all-tasks", "-f", "--fifo", "-r", "--rr", "-o", "--other", "-b", "--batch", "-i", "--idle", "-d", "--deadline", "-v", "--verbose"},
+                        "ionice": {"-t", "--ignore"},
+                        "taskset": {"-c", "--cpu-list", "-p", "--pid", "-a", "--all-tasks"},
+                        "doas": {"-n", "-s"},
+                        "xargs": {"-0", "--null", "-r", "--no-run-if-empty", "-t", "--verbose", "-x", "--exit", "-p", "--interactive"},
+                        "watch": {"-t", "--no-title", "-d", "--differences", "-e", "--errexit", "-g", "--chgexit", "-c", "--color", "-x", "--exec", "-p", "--precise"},
+                    }.get(name, set()):
+                        pass
+                    elif any(option.startswith(value + "=") for value in operands if value.startswith("--")) or any(option.startswith(value) and len(option) > len(value) for value in operands if len(value) == 2):
+                        pass
+                    elif name == "nice" and re.fullmatch(r"-[0-9]+", option):
+                        pass
+                    else:
+                        unresolved = True
+                        break
+                if name in {"timeout", "chrt", "taskset"}:
+                    if child >= len(words) or "\ue002" in words[child] or all(c in ";&|()<>\n" for c in words[child]):
+                        unresolved = True
+                    else:
+                        child += 1  # literal duration, priority or CPU mask
+                if unresolved:
+                    if any("\ue002" in value or git_executable(value.replace("\ue003", "")) or possible_guarded(value.replace("\ue003", ""), depth + 1) for value in words[index:]):
+                        raise ValueError("unresolved executable wrapper cannot inspect guarded work")
+                    head = False
+                    continue
+                opaque_shell = name == "watch" or name == "sudo" and any(value.replace("\ue003", "") in {"-s", "--shell", "-i", "--login"} for value in words[index:child])
+                if opaque_shell and child < len(words) and possible_guarded(words[child].replace("\ue003", ""), depth + 1):
+                    raise ValueError("opaque wrapper shell program cannot inspect guarded work")
+                if possible_guarded(shlex.join(words[child:]), depth + 1):
+                    raise ValueError("guarded child execution wrapper requires a separate literal Git invocation")
+                head = False
+                continue
             if name == "function":
                 if index >= len(words) or "\ue002" in words[index] or all(c in ";&|()<>\n" for c in words[index]):
                     return True

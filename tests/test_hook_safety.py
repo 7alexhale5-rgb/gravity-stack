@@ -495,6 +495,110 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_child_execution_wrappers_cannot_hide_guarded_git(self):
+        for program in (
+            "sudo -s '{git}'",
+            "runuser -c '{git}'",
+            "nice sh -c '{git}'",
+            "watch '{git}'",
+        ):
+            for hook in COMMIT_HOOKS:
+                self.assertEqual(
+                    self.run_hook(hook, program.format(git="git commit -am broken")),
+                    (2, 0),
+                )
+            self.assertEqual(
+                DestructiveHookTests().decision(
+                    program.format(git="git push --force origin main")
+                ),
+                "deny",
+            )
+        for prefix in (
+            "nice",
+            "nice -n 5",
+            "nice --adjustment=5",
+            "nohup",
+            "timeout 5",
+            "timeout -s TERM -k 1 5",
+            "sudo -u root",
+            "xargs",
+            "xargs -I ITEM",
+            "xargs -n 1 -P 2",
+            "watch -n 5",
+            "sudo --user=root",
+            "setsid",
+            "stdbuf -o L",
+            "chrt -p 1",
+            "/usr/bin/nice -n 5",
+            "nice nohup",
+            "nice $OPTIONS",
+            "timeout --unknown ARG 5",
+            "sudo -u ||",
+        ):
+            for hook in COMMIT_HOOKS:
+                with self.subTest(prefix=prefix, hook=hook):
+                    self.assertEqual(
+                        self.run_hook(hook, prefix + " git commit -am broken"), (2, 0)
+                    )
+            with self.subTest(prefix=prefix, guard="push"):
+                self.assertEqual(
+                    DestructiveHookTests().decision(
+                        prefix + " git push --force origin main"
+                    ),
+                    "deny",
+                )
+        for prefix in (
+            "nice",
+            "nohup",
+            "timeout 5",
+            "sudo -u root",
+            "setsid",
+            "stdbuf -o L",
+            "xargs -n 1",
+            "watch -n 5",
+            "sudo -s",
+        ):
+            command = (
+                prefix
+                + " printf '%s' 'git commit -am literal; git push --force origin main'"
+            )
+            for hook in COMMIT_HOOKS:
+                self.assertEqual(self.run_hook(hook, command), (0, 0))
+            self.assertEqual(DestructiveHookTests().decision(command), "allow")
+
+    def test_actual_nice_and_nohup_execute_guarded_child(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake = root / "git"
+            log = root / "calls"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for prefix in ("nice", "nice -n 5", "nohup", "nice nohup"):
+                for git in ("git commit -am broken", "git push --force origin main"):
+                    command = prefix + " " + git
+                    log.write_text("")
+                    result = subprocess.run(
+                        ["bash", "-c", command],
+                        env=env,
+                        cwd=root,
+                        capture_output=True,
+                        timeout=3,
+                    )
+                    self.assertEqual(result.returncode, 0)
+                    self.assertIn(git[4:], log.read_text())
+                    if "commit" in git:
+                        for hook in COMMIT_HOOKS:
+                            self.assertEqual(self.run_hook(hook, command), (2, 0))
+                    else:
+                        self.assertEqual(
+                            DestructiveHookTests().decision(command), "deny"
+                        )
+
     def test_arithmetic_quotes_do_not_hide_executed_git_substitutions(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1977,6 +2081,12 @@ class CommitGateTests(unittest.TestCase):
             tokenizers.append(namespace["shell_tokens"])
         for command in (
             "git status &&\ncd docs; git commit -m test",
+            "nice git commit -am broken",
+            "xargs -n 1 git commit -am broken",
+            "watch -n 5 git push --force origin main",
+            "timeout -s TERM -k 1 5 git push --force origin main",
+            "sudo -s 'git push --force origin main'",
+            "nice printf '%s' 'git commit -am printed'",
             "echo $(( '$(git commit -am broken)' ))",
             "echo $(( ')$(git push --force origin main)' ))",
             "echo $((1 << 2))",
