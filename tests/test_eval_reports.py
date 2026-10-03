@@ -14,6 +14,29 @@ SOURCE = Path(__file__).resolve().parents[1]
 
 
 class FreeFallbackAssertions(unittest.TestCase):
+    def test_security_contract_accepts_documented_sources_and_gaps(self):
+        golden = (SOURCE / ".promptfoo/golden/research-stack.yaml").read_text()
+        prompt = (SOURCE / ".promptfoo/prompts/research-stack.txt").read_text()
+        block = next(
+            part
+            for part in golden.split("- description: ")[1:]
+            if "--focus security" in part.splitlines()[0]
+        )
+        assertions = re.findall(r"- type: contains-any\n\s+value: (\[.*\])", block)
+        source_line = next(
+            line for line in prompt.splitlines() if "security ->" in line
+        )
+        alternatives = re.findall(r"\[[A-Z]+\]", source_line)
+        for evidence in alternatives + [
+            "## Coverage gaps\nSecurity sources were unavailable; advisories could not be established."
+        ]:
+            report = "## Threat and advisory table\n" + evidence
+            for values in assertions:
+                self.assertTrue(
+                    any(tag in report for tag in json.loads(values)), evidence
+                )
+        # Literal acceptance proves contract compatibility, not rubric accuracy.
+
     def test_documented_free_fallback_can_pass_literal_assertions(self):
         golden = (SOURCE / ".promptfoo/golden/research-stack.yaml").read_text()
         fixtures = {

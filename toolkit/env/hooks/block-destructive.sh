@@ -307,12 +307,16 @@ def shell_tokens(command):
         )
         for word in lexer
     ]
+    if any(operator and word in ("<(", ">(") for word, operator in tokens):
+        raise ValueError("executable process substitution cannot be inspected")
     # Only executable wrapper arguments and pipeline inputs are shell programs;
     # search patterns and printed strings containing Git commands are ordinary data.
     group = []
     for word, operator in tokens + [(";", True)]:
         if operator and any(char in word for char in ";&\n"):
             heads = executable_heads(group)
+            if any(head in {"bash", "sh", "zsh", "dash", "ksh"} for head in heads) and any(is_operator and any(char in value for char in "<|") for value, is_operator in group):
+                raise ValueError("opaque executable shell input cannot be inspected")
             if any(head in {"eval", "source", "."} for head in heads):
                 raise ValueError("opaque eval or source program cannot be inspected")
             if any(

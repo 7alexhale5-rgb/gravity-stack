@@ -21,6 +21,14 @@ COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py
 
 
 class DestructiveHookTests(unittest.TestCase):
+    def test_shell_input_channels_with_quoted_git_refuse(self):
+        for command in (
+            "bash <<< '\"git\" push --force origin main'",
+            "printf '%s' '\"git\" push --force origin main' | bash",
+            "bash <(printf '%s' '\"git\" push --force origin main')",
+        ):
+            self.assertEqual(self.decision(command), "deny")
+
     def test_quoted_git_inside_executable_backticks_refuses(self):
         self.assertEqual(self.decision('echo `"git" push --force origin main`'), "deny")
         self.assertEqual(
@@ -404,6 +412,15 @@ class DestructiveHookTests(unittest.TestCase):
 
 
 class CommitGateTests(unittest.TestCase):
+    def test_shell_input_channels_with_quoted_git_refuse(self):
+        for hook in COMMIT_HOOKS:
+            for command in (
+                "bash <<< '\"git\" commit -am x'",
+                "printf '%s' '\"git\" commit -am x' | bash",
+                "bash <(printf '%s' '\"git\" commit -am x')",
+            ):
+                self.assertEqual(self.run_hook(hook, command), (2, 0))
+
     def test_quoted_git_inside_executable_backticks_refuses(self):
         for hook in COMMIT_HOOKS:
             self.assertEqual(self.run_hook(hook, 'echo `"git" commit -am x`'), (2, 0))
