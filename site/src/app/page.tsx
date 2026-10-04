@@ -10,7 +10,7 @@ const features = [
   {
     title: "31 Plugins",
     description:
-      "Curated plugin collection covering code review, testing, deployment, design, security, and more. Every one verified in production.",
+      "Curated plugin collection covering code review, testing, deployment, design, security, and more.",
     href: "/plugins",
     color: "text-electric",
     glowColor: "rgba(0, 255, 136, 0.12)",
@@ -28,7 +28,7 @@ const features = [
   {
     title: "7 Lifecycle Hooks",
     description:
-      "Automated guardrails: commit gates, file guards, session backup, auto-lint, context injection. Every commit type-safe.",
+      "Automated guardrails: commit gates, file guards, session backup, auto-lint, context injection.",
     href: "/hooks",
     color: "text-heat",
     glowColor: "rgba(255, 68, 68, 0.10)",
@@ -65,20 +65,20 @@ const features = [
 
 const differentiators = [
   {
-    text: "Every tool is verified and running in production",
-    detail: "No theoretical recommendations",
+    text: "Tools, setup steps, and checks are documented",
+    detail: "Verify selected tools in your own environment",
   },
   {
-    text: "Every version number is pinned and tested",
-    detail: "Not \"just install the latest\"",
+    text: "Installer versions are pinned",
+    detail: "Check updates before adopting them",
   },
   {
-    text: "Every configuration is the actual config",
-    detail: "Not a sanitized example",
+    text: "Shareable configuration examples are included",
+    detail: "Keep credentials and private settings local",
   },
   {
-    text: "Every workflow documented from real usage",
-    detail: "Not hypothetical patterns",
+    text: "Development workflows are documented",
+    detail: "Use tests and review to confirm results",
   },
 ];
 
@@ -94,7 +94,7 @@ export default function HomePage() {
             What&apos;s Inside
           </h2>
           <p className="text-dim mb-12 max-w-2xl">
-            A complete, production-verified AI-native development environment. Not a list of links — a documented, working system.
+            A documented AI-native development setup with tools, configuration examples, and verification steps.
           </p>
         </ScrollReveal>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -147,9 +147,9 @@ export default function HomePage() {
                 Not Another Awesome List
               </h2>
               <p className="text-dim mb-6 leading-relaxed">
-                Most Claude Code setups use 2-3 plugins and zero hooks. That&apos;s like
-                buying a Ferrari and driving it in first gear. The Gravity Stack documents
-                the full potential.
+                Gravity Stack brings setup guides, plugins, hooks, and project checks
+                into one place. Use the guides to configure each layer and track
+                what still needs checking.
               </p>
               <Link
                 href="/manifesto"
@@ -192,8 +192,8 @@ export default function HomePage() {
                 Ready to Build?
               </h2>
               <p className="text-dim mb-8 max-w-xl mx-auto">
-                Clone the repo, run the toolkit, and have a production-grade AI-native
-                environment in minutes.
+                Clone the repo, review the setup steps, and verify the tools
+                in your own environment.
               </p>
               <div className="flex justify-center gap-4">
                 <MagneticButton>

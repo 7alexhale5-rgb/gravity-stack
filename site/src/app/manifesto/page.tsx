@@ -114,12 +114,10 @@ export default function ManifestoPage() {
 
         <ScrollReveal delay={0.15}>
           <p className="text-dim leading-relaxed">
-            The Gravity Stack documents a production environment that ships real
-            software across multiple projects simultaneously. The exact
-            configuration described here maintains 97/100 platform audit scores,
-            enforces TypeScript correctness at commit time, persists semantic
-            memory across sessions, and coordinates specialized AI agent teams for
-            different task types.
+            The Gravity Stack documents an AI-assisted development setup with
+            configuration examples, commit checks, persistent memory options,
+            and specialized agent roles. Installation checks confirm selected
+            setup steps; runtime connections and credentials need separate checks.
           </p>
         </ScrollReveal>
 
@@ -131,10 +129,10 @@ export default function ManifestoPage() {
 
         <ul className="space-y-3 text-dim">
           {[
-            <>Every tool is <span className="text-text">verified and running</span> in production — no theoretical recommendations</>,
-            <>Every version number is <span className="text-text">pinned and tested</span> — no &ldquo;just install the latest&rdquo;</>,
-            <>Every configuration is <span className="text-text">the actual config</span> — not a sanitized example</>,
-            <>Every workflow is <span className="text-text">documented from real usage</span> — not hypothetical patterns</>,
+            <>Tools and <span className="text-text">verification steps</span> are documented; test selected tools in your own environment</>,
+            <>Installer versions are <span className="text-text">pinned</span>; verify updates before adoption</>,
+            <><span className="text-text">Shareable configuration examples</span> keep credentials and private settings local</>,
+            <><span className="text-text">Development workflows</span> use tests and review to confirm results</>,
           ].map((item, i) => (
             <ScrollReveal key={i} delay={i * 0.06}>
               <li className="flex gap-3">

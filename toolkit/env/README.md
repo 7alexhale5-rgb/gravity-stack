@@ -1,6 +1,6 @@
 # toolkit/env/ — shareable Claude Code environment
 
-Drop-in mirror of my actual `~/.claude/` and `~/.carl/` setup, sanitized for public use. Clone this repo, run `toolkit/install.sh`, and your Claude Code comes up with the same agents, hooks, CARL rules, references, and settings skeleton I use daily.
+Drop-in mirror of my actual `~/.claude/` and `~/.carl/` setup, sanitized for public use. These are optional reference assets. The default installer does not copy this entire environment or prove its live behavior.
 
 ## What's inside
 
@@ -15,7 +15,7 @@ Drop-in mirror of my actual `~/.claude/` and `~/.carl/` setup, sanitized for pub
 
 ## Installation
 
-The top-level `toolkit/install.sh` is idempotent. It installs the generic pieces (hooks, agents, CARL) by default and prompts before touching your existing `settings.json` or `CLAUDE.md` files.
+The top-level `toolkit/install.sh` preserves existing settings. On a fresh home it copies the starter settings, installs the commit gate and registers five MCP servers using `claude mcp add`. Registration does not prove connection or credentials. Agents, CARL, references and the other hooks below are optional manual installs. Review their dependencies before selecting them.
 
 ```bash
 bash toolkit/install.sh
@@ -30,7 +30,7 @@ cp -n hooks/*            ~/.claude/hooks/
 cp -n references/*       ~/.claude/references/
 ```
 
-Then merge the hook/permission blocks from `settings.template.json` into your own `~/.claude/settings.json`.
+Create those destination directories first. Copy only the assets you intend to use. Then merge the hook/permission blocks from `settings.template.json` into your own `~/.claude/settings.json`.
 
 ## What got redacted
 
