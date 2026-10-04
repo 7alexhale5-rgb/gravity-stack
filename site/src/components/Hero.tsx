@@ -5,13 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { stackStats } from "@/lib/data/stack";
 import { TextReveal } from "./TextReveal";
 import { MagneticButton } from "./MagneticButton";
-function CountUp({
-  target,
-  duration = 2,
-}: {
-  target: number | string;
-  duration?: number;
-}) {
+function CountUp({ target, duration = 2 }: { target: number | string; duration?: number }) {
   const numTarget = typeof target === "string" ? parseInt(target) || 0 : target;
   const [count, setCount] = useState(0);
   const ref = useRef<HTMLSpanElement>(null);
@@ -19,9 +13,7 @@ function CountUp({
   useEffect(() => {
     let frame = 0;
     let started = false;
-    const prefersReducedMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (prefersReducedMotion) {
       frame = requestAnimationFrame(() => setCount(numTarget));
       return () => cancelAnimationFrame(frame);
@@ -42,7 +34,7 @@ function CountUp({
           frame = requestAnimationFrame(animate);
         }
       },
-      { threshold: 0.5 },
+      { threshold: 0.5 }
     );
     if (ref.current) observer.observe(ref.current);
     return () => {
@@ -51,10 +43,9 @@ function CountUp({
     };
   }, [numTarget, duration]);
 
-  const display =
-    typeof target === "string" && target.includes("+")
-      ? `${count}+${target.split("+").slice(1).join("+")}`
-      : count;
+  const display = typeof target === "string" && target.includes("+")
+    ? `${count}+${target.split("+").slice(1).join("+")}`
+    : count;
 
   return <span ref={ref}>{display}</span>;
 }
@@ -75,10 +66,8 @@ export function Hero() {
         style={{
           backgroundImage: `linear-gradient(rgba(0,212,255,0.15) 1px, transparent 1px), linear-gradient(90deg, rgba(0,212,255,0.15) 1px, transparent 1px)`,
           backgroundSize: "60px 60px",
-          maskImage:
-            "radial-gradient(ellipse at center, black 30%, transparent 70%)",
-          WebkitMaskImage:
-            "radial-gradient(ellipse at center, black 30%, transparent 70%)",
+          maskImage: "radial-gradient(ellipse at center, black 30%, transparent 70%)",
+          WebkitMaskImage: "radial-gradient(ellipse at center, black 30%, transparent 70%)",
         }}
         aria-hidden="true"
       />
@@ -126,8 +115,7 @@ export function Hero() {
           animate={{ opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.8 }}
         >
-          Open source. Tools, configuration examples, and setup checks. Ready to
-          fork.
+          Open source. Tools, configuration examples, and setup checks. Ready to fork.
         </motion.p>
 
         {/* Stats with glass cards and count-up */}
@@ -138,10 +126,7 @@ export function Hero() {
           transition={{ duration: 0.6, delay: 1.0 }}
         >
           <StatBlock value={stackStats.plugins} label="Plugins" />
-          <StatBlock
-            value={stackStats.mcpServers.display}
-            label="MCP Servers"
-          />
+          <StatBlock value={stackStats.mcpServers.display} label="MCP Servers" />
           <StatBlock value={stackStats.hooks} label="Hooks" />
           <StatBlock value={stackStats.skills} label="Skills" />
         </motion.div>
@@ -159,13 +144,7 @@ export function Hero() {
               className="inline-flex items-center px-7 py-3.5 rounded-[10px] bg-electric text-bg font-medium hover:bg-electric/90 hover:shadow-[0_0_30px_rgba(0,212,255,0.4)] text-sm btn-press"
             >
               Get Started
-              <svg
-                className="ml-2 w-4 h-4"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
+              <svg className="ml-2 w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M3 8h10M9 4l4 4-4 4" />
               </svg>
             </a>
@@ -177,11 +156,7 @@ export function Hero() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              <svg
-                className="mr-2 w-4 h-4"
-                viewBox="0 0 16 16"
-                fill="currentColor"
-              >
+              <svg className="mr-2 w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
               </svg>
               GitHub
@@ -193,30 +168,19 @@ export function Hero() {
   );
 }
 
-function StatBlock({
-  value,
-  label,
-}: {
-  value: number | string;
-  label: string;
-}) {
+function StatBlock({ value, label }: { value: number | string; label: string }) {
   return (
     <div className="glass rounded-[10px] p-5 md:p-6 text-center group hover:border-electric/20 transition-all duration-300 hover:translate-y-[-2px] relative overflow-hidden">
       <div
         className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-        style={{
-          background:
-            "radial-gradient(ellipse at 50% 0%, rgba(0, 212, 255, 0.06), transparent 70%)",
-        }}
+        style={{ background: "radial-gradient(ellipse at 50% 0%, rgba(0, 212, 255, 0.06), transparent 70%)" }}
         aria-hidden="true"
       />
       <div className="relative">
         <div className="stat-glow font-heading text-3xl md:text-5xl text-electric mb-2 tracking-tight">
           <CountUp target={value} />
         </div>
-        <div className="text-[11px] md:text-xs text-gs-muted uppercase tracking-[0.2em]">
-          {label}
-        </div>
+        <div className="text-[11px] md:text-xs text-gs-muted uppercase tracking-[0.2em]">{label}</div>
       </div>
     </div>
   );

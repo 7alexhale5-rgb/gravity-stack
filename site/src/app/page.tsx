@@ -94,18 +94,14 @@ export default function HomePage() {
             What&apos;s Inside
           </h2>
           <p className="text-dim mb-12 max-w-2xl">
-            A documented AI-native development setup with tools, configuration
-            examples, and verification steps.
+            A documented AI-native development setup with tools, configuration examples, and verification steps.
           </p>
         </ScrollReveal>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {features.map((feature, i) => (
             <ScrollReveal key={feature.href} delay={i * 0.08}>
               <Link href={feature.href}>
-                <GlowCard
-                  className="h-full group cursor-pointer"
-                  glowColor={feature.glowColor}
-                >
+                <GlowCard className="h-full group cursor-pointer" glowColor={feature.glowColor}>
                   <div className="flex items-start gap-3">
                     <div className="relative">
                       <svg
@@ -126,9 +122,7 @@ export default function HomePage() {
                       />
                     </div>
                     <div>
-                      <h3
-                        className={`font-medium text-lg mb-2 ${feature.color}`}
-                      >
+                      <h3 className={`font-medium text-lg mb-2 ${feature.color}`}>
                         {feature.title}
                       </h3>
                       <p className="text-sm text-dim">{feature.description}</p>
@@ -145,12 +139,7 @@ export default function HomePage() {
 
       {/* Why This Stack */}
       <section className="relative overflow-hidden">
-        <GlowEffect
-          color="bg-electric/3"
-          size="w-[500px] h-[300px]"
-          blur="blur-[120px]"
-          position="absolute -top-20 -right-40"
-        />
+        <GlowEffect color="bg-electric/3" size="w-[500px] h-[300px]" blur="blur-[120px]" position="absolute -top-20 -right-40" />
         <div className="max-w-[1400px] mx-auto px-5 md:px-[60px] py-16 md:py-24">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-start">
             <ScrollReveal>
@@ -158,9 +147,9 @@ export default function HomePage() {
                 Not Another Awesome List
               </h2>
               <p className="text-dim mb-6 leading-relaxed">
-                Gravity Stack brings setup guides, plugins, hooks, and project
-                checks into one place. Use the guides to configure each layer
-                and track what still needs checking.
+                Gravity Stack brings setup guides, plugins, hooks, and project checks
+                into one place. Use the guides to configure each layer and track
+                what still needs checking.
               </p>
               <Link
                 href="/manifesto"
@@ -174,16 +163,8 @@ export default function HomePage() {
                 {differentiators.map((d, i) => (
                   <ScrollReveal key={d.text} delay={0.1 * i}>
                     <div className="flex gap-3 items-start">
-                      <svg
-                        className="w-5 h-5 text-electric flex-shrink-0 mt-0.5"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                          clipRule="evenodd"
-                        />
+                      <svg className="w-5 h-5 text-electric flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                       </svg>
                       <div>
                         <span className="text-text text-sm">{d.text}</span>
@@ -202,18 +183,8 @@ export default function HomePage() {
 
       {/* CTA */}
       <section className="relative overflow-hidden">
-        <GlowEffect
-          color="bg-nova/4"
-          size="w-[400px] h-[300px]"
-          blur="blur-[130px]"
-          position="absolute top-1/2 left-1/4 -translate-y-1/2"
-        />
-        <GlowEffect
-          color="bg-electric/3"
-          size="w-[300px] h-[200px]"
-          blur="blur-[100px]"
-          position="absolute bottom-0 right-1/4"
-        />
+        <GlowEffect color="bg-nova/4" size="w-[400px] h-[300px]" blur="blur-[130px]" position="absolute top-1/2 left-1/4 -translate-y-1/2" />
+        <GlowEffect color="bg-electric/3" size="w-[300px] h-[200px]" blur="blur-[100px]" position="absolute bottom-0 right-1/4" />
         <div className="max-w-[1400px] mx-auto px-5 md:px-[60px] py-16 md:py-24">
           <ScrollReveal>
             <div className="text-center">
@@ -221,8 +192,8 @@ export default function HomePage() {
                 Ready to Build?
               </h2>
               <p className="text-dim mb-8 max-w-xl mx-auto">
-                Clone the repo, review the setup steps, and verify the tools in
-                your own environment.
+                Clone the repo, review the setup steps, and verify the tools
+                in your own environment.
               </p>
               <div className="flex justify-center gap-4">
                 <MagneticButton>
