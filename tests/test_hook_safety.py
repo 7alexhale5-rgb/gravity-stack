@@ -22,7 +22,27 @@ HOOKS = ROOT / "toolkit/env/hooks"
 COMMIT_HOOKS = [HOOKS / "commit-gate.py", ROOT / "toolkit/configs/commit-gate.py"]
 
 
-class DestructiveHookTests(unittest.TestCase):
+def fixture_environment(root, inherited=None):
+    env = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    env.update(HOME=str(root), XDG_CONFIG_HOME=str(root / "xdg"))
+    env.update(inherited or {})
+    return env
+
+
+class OwnedShellFixture(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="gravity-owned-shell-")
+        self.addCleanup(temporary.cleanup)
+        env = fixture_environment(Path(temporary.name))
+        env.pop("CDPATH", None)
+        patch = mock.patch.dict(os.environ, env, clear=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+
+class DestructiveHookTests(OwnedShellFixture):
     def test_function_keyword_cannot_hide_protected_push_body(self):
         for declaration in (
             "function ship { git push --force origin main; }; ship",
@@ -247,7 +267,17 @@ class DestructiveHookTests(unittest.TestCase):
                 "GIT_CONFIG_VALUE_0": "true",
             },
         ):
-            self.assertEqual(self.decision("git push origin"), "deny")
+            self.assertEqual(
+                self.decision(
+                    "git push origin",
+                    inherited_env={
+                        key: value
+                        for key, value in os.environ.items()
+                        if key.startswith("GIT_CONFIG")
+                    },
+                ),
+                "deny",
+            )
 
     def test_backtick_wrapped_push_is_not_a_literal_git_command(self):
         for command in (
@@ -391,14 +421,18 @@ class DestructiveHookTests(unittest.TestCase):
             "allow",
         )
 
-    def decision(self, command):
-        run = subprocess.run(
-            ["bash", str(HOOKS / "block-destructive.sh")],
-            input=json.dumps({"tool_input": {"command": command}}),
-            text=True,
-            capture_output=True,
-            check=True,
-        )
+    def decision(self, command, inherited_env=None):
+        with tempfile.TemporaryDirectory(
+            prefix="gravity-owned-push-hook-"
+        ) as temporary:
+            run = subprocess.run(
+                ["bash", str(HOOKS / "block-destructive.sh")],
+                input=json.dumps({"tool_input": {"command": command}}),
+                env=fixture_environment(Path(temporary), inherited_env),
+                text=True,
+                capture_output=True,
+                check=True,
+            )
         return (
             json.loads(run.stdout)["hookSpecificOutput"]["permissionDecision"]
             if run.stdout
@@ -496,9 +530,64 @@ class DestructiveHookTests(unittest.TestCase):
             self.assertEqual(self.decision(f"git {option} push origin main"), "allow")
 
 
-class CommitGateTests(unittest.TestCase):
+class CommitGateTests(OwnedShellFixture):
+    def test_review34_find_missing_operand_preserves_shell_boundary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(binary) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for option in ("-name", "-type", "-fprintf"):
+                for operation in ("commit -am broken", "push --force origin main"):
+                    command = "find . " + option + "; git " + operation
+                    log.write_text("")
+                    executed = subprocess.run(
+                        ["bash", "-c", command],
+                        cwd=root,
+                        env=env,
+                        capture_output=True,
+                        timeout=5,
+                    )
+                    self.assertEqual(executed.returncode, 0, executed.stderr)
+                    self.assertIn(operation, log.read_text())
+                    if operation.startswith("commit"):
+                        for hook in COMMIT_HOOKS:
+                            self.assertEqual(self.run_hook(hook, command), (2, 0))
+                    else:
+                        self.assertEqual(
+                            DestructiveHookTests().decision(command), "deny"
+                        )
+            for command in (
+                "find . -name ';' -print",
+                "find . -exec printf '%s' ';' \\;",
+            ):
+                for hook in COMMIT_HOOKS:
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+
+    def test_review34_ordinary_hook_and_git_queries_ignore_poisoned_parent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "foreign-config"
+            config.write_text("[core]\n\tworktree = /wrong-fixture\n")
+            with mock.patch.dict(
+                os.environ,
+                {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": str(config)},
+            ):
+                for hook in COMMIT_HOOKS:
+                    self.assertEqual(
+                        self.run_hook(hook, "git commit -m fixture"), (0, 1)
+                    )
+                self.test_commit_argument_expansion_cannot_mutate_git_environment()
 
     def run_fixture_git(self, argv, **kwargs):
+        fixture_config = kwargs.pop("fixture_config", False)
         if not hasattr(self, "_git_fixture_root"):
             temporary = tempfile.TemporaryDirectory(prefix="gravity-owned-git-config-")
             self.addCleanup(temporary.cleanup)
@@ -506,9 +595,33 @@ class CommitGateTests(unittest.TestCase):
             (self._git_fixture_root / "hooks").mkdir()
         env = dict(kwargs.pop("env", os.environ))
         env = {key: value for key, value in env.items() if not key.startswith("GIT_")}
-        env.update(HOME=str(self._git_fixture_root), XDG_CONFIG_HOME=str(self._git_fixture_root / "xdg"), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
-        command = [argv[0], "-c", "commit.gpgSign=false", "-c", "core.hooksPath=" + str(self._git_fixture_root / "hooks")] + list(argv[1:])
+        if fixture_config:
+            for key in ("HOME", "XDG_CONFIG_HOME"):
+                assert (
+                    Path(env[key])
+                    .resolve()
+                    .is_relative_to(Path(tempfile.gettempdir()).resolve())
+                )
+        else:
+            env.update(
+                HOME=str(self._git_fixture_root),
+                XDG_CONFIG_HOME=str(self._git_fixture_root / "xdg"),
+                GIT_CONFIG_GLOBAL=os.devnull,
+            )
+        env["GIT_CONFIG_NOSYSTEM"] = "1"
+        command = [
+            argv[0],
+            "-c",
+            "commit.gpgSign=false",
+            "-c",
+            "core.hooksPath=" + str(self._git_fixture_root / "hooks"),
+        ] + list(argv[1:])
         return subprocess.run(command, env=env, **kwargs)
+
+    def fixture_git_output(self, argv, **kwargs):
+        return self.run_fixture_git(
+            argv, fixture_config=True, check=True, capture_output=True, **kwargs
+        ).stdout
 
     def test_review33_unquoted_heredoc_logical_lines_execute_only_fake_git(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -675,6 +788,7 @@ class CommitGateTests(unittest.TestCase):
             "git config --get remote.origin.push; git push origin feature",
         ):
             self.assertEqual(DestructiveHookTests().decision(command), "allow", command)
+
     def test_actual_inline_git_aliases_cannot_hide_guarded_operations(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -728,7 +842,9 @@ class CommitGateTests(unittest.TestCase):
                             DestructiveHookTests().decision(command), "deny"
                         )
                 (repo / "change.txt").write_text(str(attached))
-                self.run_fixture_git([real_git, "-C", str(repo), "add", "."], check=True)
+                self.run_fixture_git(
+                    [real_git, "-C", str(repo), "add", "."], check=True
+                )
                 value = "alias.save=commit"
                 args = (["-c" + value] if attached else ["-c", value]) + [
                     "save",
@@ -1402,7 +1518,7 @@ class CommitGateTests(unittest.TestCase):
             (alternate / "git" / "config").write_text(
                 "[core]\nworktree = " + str(broken) + "\n"
             )
-            config = subprocess.check_output(
+            config = self.fixture_git_output(
                 ["git", "config", "--global", "--get", "core.worktree"],
                 env=dict(os.environ, XDG_CONFIG_HOME=str(alternate), HOME=str(root)),
                 text=True,
@@ -1611,12 +1727,12 @@ class CommitGateTests(unittest.TestCase):
                 directory.mkdir(parents=True)
             for directory in (clean, broken):
                 (directory / "tsconfig.json").write_text("{}")
-            subprocess.run(["git", "init", "-q", str(clean)], check=True)
+            self.run_fixture_git(["git", "init", "-q", str(clean)], check=True)
             (alternate / "git" / "config").write_text(
                 "[core]\nworktree = " + str(broken) + "\n"
             )
             env = {"XDG_CONFIG_HOME": str(original), "HOME": str(home)}
-            effective = subprocess.check_output(
+            effective = self.fixture_git_output(
                 ["git", "-C", str(clean), "config", "--get", "core.worktree"],
                 env=dict(dict(os.environ, **env), XDG_CONFIG_HOME=str(alternate)),
                 text=True,
@@ -1826,7 +1942,7 @@ class CommitGateTests(unittest.TestCase):
                 clean, broken = root / "target", root / "other" / "target"
                 for repo in (clean, broken):
                     repo.mkdir(parents=True)
-                    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+                    self.run_fixture_git(["git", "init", "-q", str(repo)], check=True)
                     (repo / "tsconfig.json").write_text("{}")
                 for preamble in (
                     'echo "${CDPATH:=' + str(broken.parent) + '}"',
@@ -1892,7 +2008,7 @@ class CommitGateTests(unittest.TestCase):
                 clean, broken = root / "project", root / "project\r"
                 for repo in (clean, broken):
                     repo.mkdir()
-                    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+                    self.run_fixture_git(["git", "init", "-q", str(repo)], check=True)
                     (repo / "tsconfig.json").write_text("{}")
                 payload = {
                     "cwd": str(broken),
@@ -1942,12 +2058,12 @@ class CommitGateTests(unittest.TestCase):
                 ):
                     root = Path(temporary).resolve()
                     (root / "tsconfig.json").write_text("{}")
-                    subprocess.run(["git", "init", "-q", str(root)], check=True)
+                    self.run_fixture_git(["git", "init", "-q", str(root)], check=True)
                     marker = root / "must-not-execute"
                     program = root / "unsafe-execution"
                     program.write_text("#!/bin/sh\ntouch " + str(marker) + "\n")
                     program.chmod(0o755)
-                    subprocess.run(
+                    self.run_fixture_git(
                         ["git", "-C", str(root), "config", key, str(program)],
                         check=True,
                     )
@@ -1979,7 +2095,7 @@ class CommitGateTests(unittest.TestCase):
                 docs.mkdir(parents=True)
                 (root / "tsconfig.json").write_text("{}")
                 (package / "tsconfig.json").write_text("{}")
-                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                self.run_fixture_git(["git", "init", "-q", str(root)], check=True)
                 payload = {
                     "cwd": str(docs),
                     "tool_input": {"command": "git commit -am x"},
@@ -2017,8 +2133,8 @@ class CommitGateTests(unittest.TestCase):
                 docs = metadata / "docs"
                 docs.mkdir(parents=True)
                 (root / "tsconfig.json").write_text("{}")
-                subprocess.run(["git", "init", "-q", str(metadata)], check=True)
-                subprocess.run(
+                self.run_fixture_git(["git", "init", "-q", str(metadata)], check=True)
+                self.run_fixture_git(
                     ["git", "-C", str(metadata), "config", "core.worktree", str(root)],
                     check=True,
                 )
@@ -2077,12 +2193,12 @@ class CommitGateTests(unittest.TestCase):
                 broken = Path(temporary).resolve()
                 repo = broken / "metadata"
                 (broken / "tsconfig.json").write_text("{}")
-                subprocess.run(["git", "init", "-q", "--bare", str(repo)], check=True)
+                self.run_fixture_git(["git", "init", "-q", "--bare", str(repo)], check=True)
                 for key, value in (
                     ("core.bare", "false"),
                     ("core.worktree", str(broken)),
                 ):
-                    subprocess.run(
+                    self.run_fixture_git(
                         ["git", "--git-dir", str(repo), "config", key, value],
                         check=True,
                     )
@@ -2123,7 +2239,7 @@ class CommitGateTests(unittest.TestCase):
                 for repo in (clean, broken):
                     repo.mkdir()
                     (repo / "tsconfig.json").write_text("{}")
-                    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+                    self.run_fixture_git(["git", "init", "-q", str(repo)], check=True)
                 payload = {
                     "cwd": str(broken),
                     "tool_input": {"command": "git commit -am x"},
@@ -2151,12 +2267,12 @@ class CommitGateTests(unittest.TestCase):
                 broken = root / "broken"
                 broken.mkdir()
                 (broken / "tsconfig.json").write_text("{}")
-                subprocess.run(["git", "init", "-q", "--bare", str(repo)], check=True)
+                self.run_fixture_git(["git", "init", "-q", "--bare", str(repo)], check=True)
                 for key, value in (
                     ("core.bare", "false"),
                     ("core.worktree", str(broken)),
                 ):
-                    subprocess.run(
+                    self.run_fixture_git(
                         ["git", "--git-dir", str(repo), "config", key, value],
                         check=True,
                     )
@@ -2214,7 +2330,7 @@ class CommitGateTests(unittest.TestCase):
                 )
             with tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary).resolve()
-                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                self.run_fixture_git(["git", "init", "-q", str(root)], check=True)
                 (root / "tsconfig.json").write_text("{}")
                 (root / "bin").mkdir()
                 import shutil
@@ -2286,8 +2402,8 @@ class CommitGateTests(unittest.TestCase):
                 for repo in (clean, broken):
                     repo.mkdir()
                     (repo / "tsconfig.json").write_text("{}")
-                subprocess.run(["git", "init", "-q", str(clean)], check=True)
-                subprocess.run(
+                self.run_fixture_git(["git", "init", "-q", str(clean)], check=True)
+                self.run_fixture_git(
                     ["git", "-C", str(clean), "config", "core.worktree", str(broken)],
                     check=True,
                 )
@@ -2319,7 +2435,7 @@ class CommitGateTests(unittest.TestCase):
         for hook in COMMIT_HOOKS:
             with tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary).resolve()
-                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                self.run_fixture_git(["git", "init", "-q", str(root)], check=True)
                 (root / "tsconfig.json").write_text("{}")
                 payload = {
                     "cwd": str(root),
@@ -2833,7 +2949,7 @@ class CommitGateTests(unittest.TestCase):
         for hook in COMMIT_HOOKS:
             with self.subTest(hook=hook), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp).resolve()
-                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                self.run_fixture_git(["git", "init", "-q", str(root)], check=True)
                 (root / "tsconfig.json").write_text("{}")
                 (root / "docs").mkdir()
                 payload = {
@@ -2864,7 +2980,7 @@ class CommitGateTests(unittest.TestCase):
                 root = Path(tmp).resolve()
                 (root / "tsconfig.json").write_text("{}")
                 repo = root / "nested"
-                subprocess.run(["git", "init", "-q", str(repo)], check=True)
+                self.run_fixture_git(["git", "init", "-q", str(repo)], check=True)
                 (repo / "docs").mkdir()
                 payload = {
                     "cwd": str(repo),
@@ -3184,7 +3300,7 @@ class CommitGateTests(unittest.TestCase):
             with (
                 mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))),
                 mock.patch("subprocess.run", fake),
-                mock.patch.dict(os.environ, {}, clear=False),
+                mock.patch.dict(os.environ, fixture_environment(root), clear=True),
             ):
                 try:
                     runpy.run_path(str(hook), run_name="__main__")
