@@ -531,6 +531,43 @@ class DestructiveHookTests(OwnedShellFixture):
 
 
 class CommitGateTests(OwnedShellFixture):
+    def test_review35_malformed_single_bracket_preserves_shell_commands(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(binary) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for operation in ("commit -am broken", "push --force origin main"):
+                command = "[ x; git " + operation + "; ]"
+                log.write_text("")
+                subprocess.run(
+                    ["bash", "-c", command],
+                    cwd=root,
+                    env=env,
+                    capture_output=True,
+                    timeout=5,
+                )
+                self.assertIn(operation, log.read_text())
+                if operation.startswith("commit"):
+                    for hook in COMMIT_HOOKS:
+                        self.assertEqual(self.run_hook(hook, command), (2, 0))
+                else:
+                    self.assertEqual(DestructiveHookTests().decision(command), "deny")
+            for command in (
+                "[ ';' = ';' ]",
+                "[ x ] && printf '%s' 'git commit -am literal'",
+            ):
+                for hook in COMMIT_HOOKS:
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+
     def test_review34_find_missing_operand_preserves_shell_boundary(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -2193,7 +2230,9 @@ class CommitGateTests(OwnedShellFixture):
                 broken = Path(temporary).resolve()
                 repo = broken / "metadata"
                 (broken / "tsconfig.json").write_text("{}")
-                self.run_fixture_git(["git", "init", "-q", "--bare", str(repo)], check=True)
+                self.run_fixture_git(
+                    ["git", "init", "-q", "--bare", str(repo)], check=True
+                )
                 for key, value in (
                     ("core.bare", "false"),
                     ("core.worktree", str(broken)),
@@ -2267,7 +2306,9 @@ class CommitGateTests(OwnedShellFixture):
                 broken = root / "broken"
                 broken.mkdir()
                 (broken / "tsconfig.json").write_text("{}")
-                self.run_fixture_git(["git", "init", "-q", "--bare", str(repo)], check=True)
+                self.run_fixture_git(
+                    ["git", "init", "-q", "--bare", str(repo)], check=True
+                )
                 for key, value in (
                     ("core.bare", "false"),
                     ("core.worktree", str(broken)),

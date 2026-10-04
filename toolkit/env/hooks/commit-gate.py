@@ -327,8 +327,11 @@ def shell_tokens(command):
                     token = words[end].replace("\ue003", "")
                     if name != "test" and token == terminator:
                         break
-                    if name == "test" and token and all(c in ";&|()<>\n" for c in token):
-                        break
+                    if words[end] and all(c in ";&|()<>\n" for c in words[end]):
+                        if name == "[":
+                            raise ValueError("single-bracket condition crossed shell boundary")
+                        if name == "test":
+                            break
                     end += 1
                 if name != "test" and end == len(words):
                     raise ValueError("unterminated conditional cannot be inspected")

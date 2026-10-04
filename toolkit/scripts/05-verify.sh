@@ -27,7 +27,7 @@ echo ""
 
 commit_gate_registered() {
   python3 - <<'PYTHON'
-import json, os, re, shlex, shutil, subprocess
+import json, os, re, shlex, shutil, subprocess, sys
 from pathlib import Path
 try:
     selected = Path(os.environ.get('CLAUDE_CONFIG_DIR') or str(Path.home() / '.claude'))
@@ -36,6 +36,11 @@ try:
     if settings.get('disableAllHooks', False) is not False:
         raise SystemExit(1)
     gate = root / 'hooks/commit-gate.py'
+    def compatible_interpreter(executable):
+        # Credit only the interpreter executing this verifier. Another runtime
+        # remains unverified; executable names alone cannot prove Python 3.9+.
+        return (sys.version_info >= (3, 9) and executable is not None
+                and Path(executable).resolve() == Path(sys.executable).resolve())
     def matches_bash(matcher):
         # Claude uses exact alternatives or JavaScript RegExp.test, not Python regex.
         if matcher in ('', '*'):
@@ -63,7 +68,7 @@ try:
         if not re.fullmatch(r'python(?:3(?:\.\d+)?)?', Path(interpreter).name) or ("/" in interpreter and not Path(interpreter).is_absolute()):
             return False
         resolved = shutil.which(interpreter)
-        if resolved is None or not Path(resolved).is_file() or not os.access(resolved, os.X_OK):
+        if not compatible_interpreter(resolved) or not Path(resolved).is_file() or not os.access(resolved, os.X_OK):
             return False
         position = 1
         while position < len(args) and args[position] in ('-u', '-B', '-I', '-E', '-s', '-S', '-O', '-OO'):
@@ -114,7 +119,7 @@ try:
         if not re.fullmatch(r'python(?:3(?:\.\d+)?)?', Path(interpreter).name) or ('/' in interpreter and not Path(interpreter).is_absolute()):
             return False
         executable = shutil.which(interpreter)
-        if executable is None or not Path(executable).is_file() or not os.access(executable, os.X_OK):
+        if not compatible_interpreter(executable) or not Path(executable).is_file() or not os.access(executable, os.X_OK):
             return False
         position = 0
         while position < len(args) and args[position] in ('-u', '-B', '-I', '-E', '-s', '-S', '-O', '-OO'):
