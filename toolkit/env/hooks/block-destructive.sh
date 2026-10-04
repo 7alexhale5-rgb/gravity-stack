@@ -624,18 +624,33 @@ def shell_tokens(command):
                     if option in {";", "&", "&&", "|", "||", "\n"}:
                         break
                     position += 1
-                    if option in valued:
-                        position += 1
-                    elif option == "-fprintf":
-                        position += 2
+                    if option in valued or option == "-fprintf":
+                        count = 2 if option == "-fprintf" else 1
+                        for unused in range(count):
+                            if position >= len(words) or (
+                                words[position]
+                                and all(char in ";&|()<>\n" for char in words[position])
+                            ):
+                                raise ValueError(
+                                    "missing find operand before shell boundary"
+                                )
+                            position += 1
                     elif option in {"-exec", "-execdir", "-ok", "-okdir"}:
                         child = position
                         while position < len(words) and words[position].replace(
                             "\ue003", ""
                         ) not in {";", "+"}:
+                            if words[position] and all(
+                                char in ";&|()<>\n" for char in words[position]
+                            ):
+                                raise ValueError("find action crossed shell boundary")
                             position += 1
                         if position == len(words) or child == position:
                             raise ValueError("unresolved find execution action")
+                        if words[position] == ";":
+                            raise ValueError(
+                                "unescaped find action terminator is a shell boundary"
+                            )
                         argv = [
                             value.replace("\ue003", "")
                             for value in words[child:position]
@@ -1225,6 +1240,7 @@ def shell_tokens(command):
         else:
             group.append((word, operator))
     return tokens
+
 
 def git_operation(args):
     pos = 0
