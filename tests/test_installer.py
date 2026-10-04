@@ -146,7 +146,9 @@ store.write_text(json.dumps(data))
             self.assertEqual(store.read_bytes(), before)
             for invalid_path in ("./memory/graph.json", 17):
                 existing = json.loads(before)
-                existing["mcpServers"]["memory"]["env"]["MEMORY_FILE_PATH"] = invalid_path
+                existing["mcpServers"]["memory"]["env"]["MEMORY_FILE_PATH"] = (
+                    invalid_path
+                )
                 store.write_text(json.dumps(existing))
                 invalid_bytes = store.read_bytes()
                 rejected = subprocess.run(
@@ -205,6 +207,25 @@ with (root/'calls').open('a') as f:f.write(name+'\\n')
 
 
 class PhaseSix(unittest.TestCase):
+    def test_review35_handler_interpreter_must_match_verified_runtime(self):
+        self.real_verifier()
+        self.script("python", "#!/bin/sh\nprintf 'Python 2.7.18\\n'\nexit 1\n")
+        store = self.home / ".claude/settings.json"
+        baseline = json.loads(store.read_text())
+        absolute = str(self.home / ".claude/hooks/commit-gate.py")
+        for argv_form in (False, True):
+            settings = json.loads(json.dumps(baseline))
+            handler = settings["hooks"]["PreToolUse"][0]["hooks"][0]
+            handler["command"] = (
+                "python" if argv_form else "python " + shlex.quote(absolute)
+            )
+            if argv_form:
+                handler["args"] = [absolute]
+            original = json.dumps(settings)
+            store.write_text(original)
+            result = self.run_installer("--skip-dev-protocol")
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertEqual(store.read_text(), original)
 
     def test_review33_literal_dollar_profile_shell_spelling(self):
         self.real_verifier()
@@ -224,6 +245,7 @@ class PhaseSix(unittest.TestCase):
             result = self.run_installer("--skip-dev-protocol")
             self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
             self.assertEqual(store.read_text(), original)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="gravity-phase6-")
         self.addCleanup(self.temp.cleanup)
