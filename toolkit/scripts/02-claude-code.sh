@@ -34,7 +34,7 @@ root = Path(sys.argv[2]).resolve()
 settings = json.loads(Path(sys.argv[1]).read_text())
 for group in settings['hooks']['PreToolUse']:
     for hook in group['hooks']:
-        if hook.get('command') == 'python3 $HOME/.claude/hooks/commit-gate.py':
+        if hook.get('command') in ('python3 $HOME/.claude/hooks/commit-gate.py', 'python3 \"$HOME/.claude/hooks/commit-gate.py\"'):
             hook['command'] = 'python3 ' + shlex.quote(str(root / 'hooks/commit-gate.py'))
 for group in settings['hooks']['PreCompact']:
     for hook in group['hooks']:

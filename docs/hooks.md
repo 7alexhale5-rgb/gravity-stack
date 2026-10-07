@@ -28,7 +28,7 @@ A matcher contains a nested `hooks` list. This registers the installed commit ga
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $HOME/.claude/hooks/commit-gate.py",
+            "command": "python3 \"$HOME/.claude/hooks/commit-gate.py\"",
             "timeout": 70
           }
         ]

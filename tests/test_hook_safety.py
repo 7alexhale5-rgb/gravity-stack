@@ -531,6 +531,101 @@ class DestructiveHookTests(OwnedShellFixture):
 
 
 class CommitGateTests(OwnedShellFixture):
+    def test_review36_quoted_find_paths_preserve_callback_inspection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(binary) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for path in (";", "&", "|", "&&"):
+                (root / path).mkdir()
+                for spelling in (
+                    shlex.quote(path),
+                    "\\" + path if len(path) == 1 else shlex.quote(path),
+                ):
+                    for operation in ("commit -am broken", "push --force origin main"):
+                        command = (
+                            "find . "
+                            + spelling
+                            + " -prune -exec git "
+                            + operation
+                            + " \\;"
+                        )
+                        with self.subTest(command=command):
+                            log.write_text("")
+                            result = subprocess.run(
+                                ["bash", "-c", command],
+                                cwd=root,
+                                env=env,
+                                capture_output=True,
+                                timeout=5,
+                            )
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            self.assertIn(operation, log.read_text())
+                            if operation.startswith("commit"):
+                                for hook in COMMIT_HOOKS:
+                                    self.assertEqual(
+                                        self.run_hook(hook, command), (2, 0)
+                                    )
+                            else:
+                                self.assertEqual(
+                                    DestructiveHookTests().decision(command), "deny"
+                                )
+                self.assertEqual(
+                    DestructiveHookTests().decision(
+                        "find . " + shlex.quote(path) + " -prune -print"
+                    ),
+                    "allow",
+                )
+
+    def test_review36_indirect_indexed_parameters_fail_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(binary) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for operation in ("commit -am broken", "push --force origin main"):
+                command = (
+                    "a=(0); ref='a[$(git "
+                    + operation
+                    + "; printf 0)]'; printf '%s' \"${!ref}\""
+                )
+                log.write_text("")
+                result = subprocess.run(
+                    ["bash", "-c", command],
+                    cwd=root,
+                    env=env,
+                    capture_output=True,
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(operation, log.read_text())
+                if operation.startswith("commit"):
+                    for hook in COMMIT_HOOKS:
+                        self.assertEqual(self.run_hook(hook, command), (2, 0))
+                else:
+                    self.assertEqual(DestructiveHookTests().decision(command), "deny")
+            for literal in ("printf '%s' '${!ref}'", r"printf '%s' \${!ref}"):
+                self.assertEqual(DestructiveHookTests().decision(literal), "allow")
+                for hook in COMMIT_HOOKS:
+                    self.assertEqual(self.run_hook(hook, literal), (0, 0))
+
     def test_review35_malformed_single_bracket_preserves_shell_commands(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

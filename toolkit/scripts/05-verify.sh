@@ -94,9 +94,11 @@ try:
             add_literal_spellings(spelled_gate)
         if relative is not None and re.fullmatch(r'[A-Za-z0-9_./-]+', relative):
             supported.update({
-                '~/' + relative, '$HOME/' + relative, '${HOME}/' + relative,
+                '~/' + relative,
                 '"$HOME/' + relative + '"', '"${HOME}/' + relative + '"',
             })
+            if re.fullmatch(r'[A-Za-z0-9_./:@%+=,-]+', str(Path.home())):
+                supported.update({'$HOME/' + relative, '${HOME}/' + relative})
         # shlex.quote's literal spelling handles spaces and apostrophes without
         # interpreting variables, substitutions, operators, or extra arguments.
         literal_command = ' '.join(args[:position]) + ' ' + shlex.quote(absolute)

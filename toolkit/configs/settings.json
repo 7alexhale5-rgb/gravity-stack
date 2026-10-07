@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $HOME/.claude/hooks/commit-gate.py",
+            "command": "python3 \"$HOME/.claude/hooks/commit-gate.py\"",
             "timeout": 70
           }
         ]

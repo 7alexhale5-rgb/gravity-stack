@@ -92,6 +92,8 @@ def shell_tokens(command):
             if text.startswith("${", position):
                 end = text.find("}", position + 2)
                 reference = text[position + 2 : end] if end >= 0 else ""
+                if reference.startswith("!"):
+                    raise ValueError("unresolved indirect parameter reference cannot be inspected")
                 indexed = re.match(r"^[A-Za-z_][A-Za-z0-9_]*\[(.*)\]", reference)
                 if (
                     indexed
@@ -605,7 +607,7 @@ def shell_tokens(command):
                 }
                 while position < len(words):
                     option = words[position].replace("\ue003", "")
-                    if option in {";", "&", "&&", "|", "||", "\n"}:
+                    if words[position] in {";", "&", "&&", "|", "||", "\n"}:
                         break
                     position += 1
                     if option in valued or option == "-fprintf":

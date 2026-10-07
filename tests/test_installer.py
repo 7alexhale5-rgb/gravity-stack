@@ -207,6 +207,33 @@ with (root/'calls').open('a') as f:f.write(name+'\\n')
 
 
 class PhaseSix(unittest.TestCase):
+    def test_review36_preserved_unsafe_home_requires_quoted_expansion(self):
+        self.home = self.root / "Alex Hale"
+        self.home.mkdir()
+        self.env["HOME"] = str(self.home)
+        self.env.pop("CLAUDE_CONFIG_DIR", None)
+        self.real_verifier()
+        store = self.home / ".claude/settings.json"
+        baseline = json.loads(store.read_text())
+        for spelling, expected in (
+            ("$HOME", 1),
+            ("${HOME}", 1),
+            ('"$HOME/.claude/hooks/commit-gate.py"', 0),
+            ('"${HOME}/.claude/hooks/commit-gate.py"', 0),
+        ):
+            settings = json.loads(json.dumps(baseline))
+            command = "python3 " + (
+                spelling
+                if spelling.startswith('"')
+                else spelling + "/.claude/hooks/commit-gate.py"
+            )
+            settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"] = command
+            original = json.dumps(settings)
+            store.write_text(original)
+            result = self.run_installer("--skip-dev-protocol")
+            self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+            self.assertEqual(store.read_text(), original)
+
     def test_review35_handler_interpreter_must_match_verified_runtime(self):
         self.real_verifier()
         self.script("python", "#!/bin/sh\nprintf 'Python 2.7.18\\n'\nexit 1\n")
