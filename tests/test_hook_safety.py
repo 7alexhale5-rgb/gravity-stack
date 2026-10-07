@@ -531,6 +531,78 @@ class DestructiveHookTests(OwnedShellFixture):
 
 
 class CommitGateTests(OwnedShellFixture):
+    def test_review37_find_grouped_boundaries_execute_guarded_git(self):
+        with tempfile.TemporaryDirectory(prefix="gravity37-find-") as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"], FAKE_GIT_LOG=str(log))
+            bash = shutil.which("bash")
+            pipe_shell = bash
+            if subprocess.run([bash, "-c", "true |& true"], capture_output=True).returncode:
+                pipe_shell = shutil.which("zsh")
+            for boundary in (";\n", "&&\n", "||\n", "|&"):
+                shell = pipe_shell if boundary == "|&" else bash
+                self.assertIsNotNone(shell, "A shell supporting the exercised boundary is required")
+                prefix = "find ./missing -print" if boundary == "||\n" else "find . -print"
+                for operation in ("commit -am broken", "push --force origin main"):
+                    command = prefix + boundary + "git " + operation
+                    log.write_text("")
+                    actual = subprocess.run([shell, "-c", command], cwd=root, env=env, capture_output=True, timeout=5)
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertIn(operation, log.read_text(), command)
+                    if operation.startswith("commit"):
+                        for hook in COMMIT_HOOKS:
+                            with self.subTest(boundary=boundary, hook=hook):
+                                # The unknown prelude may be refused; it must never skip
+                                # the compile gate and authorize an unchecked commit.
+                                self.assertNotEqual(self.run_hook(hook, command), (0, 0))
+                    else:
+                        with self.subTest(boundary=boundary, guard="push"):
+                            self.assertEqual(DestructiveHookTests().decision(command), "deny")
+            for literal in (";\n", "&&\n", "|&"):
+                (root / literal).mkdir()
+                command = "find " + shlex.quote(str(root / literal)) + " -print"
+                actual = subprocess.run([bash, "-c", command], cwd=root, env=env, capture_output=True, timeout=5)
+                self.assertEqual(actual.returncode, 0, actual.stderr)
+                for hook in COMMIT_HOOKS:
+                    self.assertEqual(self.run_hook(hook, command), (0, 0), command)
+                self.assertEqual(DestructiveHookTests().decision(command), "allow", command)
+
+    def test_review37_deferred_compound_declarations_execute_guarded_git(self):
+        with tempfile.TemporaryDirectory(prefix="gravity37-declare-") as temporary:
+            root = Path(temporary)
+            log = root / "calls"
+            fake = root / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"], FAKE_GIT_LOG=str(log))
+            for builtin in ("declare", "typeset", "local"):
+                for operation in ("commit -am broken", "push --force origin main"):
+                    body = builtin + " -a 'items=([$(git " + operation + "; printf 0)]=x)'"
+                    command = "f() { " + body + "; }; f" if builtin == "local" else body
+                    log.write_text("")
+                    actual = subprocess.run(["bash", "-c", command], cwd=root, env=env, capture_output=True, timeout=5)
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertIn(operation, log.read_text(), command)
+                    if operation.startswith("commit"):
+                        for hook in COMMIT_HOOKS:
+                            with self.subTest(builtin=builtin, hook=hook):
+                                self.assertEqual(self.run_hook(hook, command), (2, 0))
+                    else:
+                        with self.subTest(builtin=builtin, guard="push"):
+                            self.assertEqual(DestructiveHookTests().decision(command), "deny")
+                for assignment in ("items=(one two)", 'items=([0]=x [1]="git commit -am printed")'):
+                    body = builtin + " -a " + shlex.quote(assignment)
+                    command = "f() { " + body + "; }; f" if builtin == "local" else body
+                    for hook in COMMIT_HOOKS:
+                        self.assertEqual(self.run_hook(hook, command), (0, 0), command)
+                    self.assertEqual(DestructiveHookTests().decision(command), "allow", command)
+
     def test_review36_quoted_find_paths_preserve_callback_inspection(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

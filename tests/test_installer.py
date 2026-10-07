@@ -13,6 +13,7 @@ import shlex
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 SOURCE = Path(__file__).resolve().parents[1]
 
@@ -207,11 +208,32 @@ with (root/'calls').open('a') as f:f.write(name+'\\n')
 
 
 class PhaseSix(unittest.TestCase):
+    def test_review37_baseline_ignores_inherited_profile(self):
+        unrelated = self.root / "unrelated-profile"
+        unrelated.mkdir()
+        unrelated_settings = unrelated / "settings.json"
+        unrelated_settings.write_text('{"private_fixture": "unchanged"}\n')
+        before = unrelated_settings.read_bytes()
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(unrelated)}):
+            fixture = PhaseSix("test_real_verifier_reaches_optional_install")
+            fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.real_verifier()
+        result = fixture.run_installer("--skip-dev-protocol")
+        with self.subTest(case="fixture-environment"):
+            self.assertTrue("CLAUDE_CONFIG_DIR" not in fixture.env, "baseline fixture inherited a custom profile")
+        with self.subTest(case="owned-baseline"):
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        (fixture.home / ".claude/settings.json").unlink()
+        missing = fixture.run_installer("--skip-dev-protocol")
+        with self.subTest(case="owned-settings-required"):
+            self.assertEqual(missing.returncode, 1, missing.stdout + missing.stderr)
+        self.assertEqual(unrelated_settings.read_bytes(), before)
+
     def test_review36_preserved_unsafe_home_requires_quoted_expansion(self):
         self.home = self.root / "Alex Hale"
         self.home.mkdir()
         self.env["HOME"] = str(self.home)
-        self.env.pop("CLAUDE_CONFIG_DIR", None)
         self.real_verifier()
         store = self.home / ".claude/settings.json"
         baseline = json.loads(store.read_text())
@@ -318,6 +340,7 @@ chmod +x "$dest/install.sh"
             HOME=str(self.home),
             PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
         )
+        self.env.pop("CLAUDE_CONFIG_DIR", None)
 
     def script(self, name, content):
         path = self.bin / name

@@ -411,6 +411,11 @@ def shell_tokens(command):
                 for argument in arguments:
                     if argument.startswith("-") or argument == "--":
                         continue
+                    # Declaration builtins reparse whole compound assignments:
+                    # outer shell quotes do not make their array indices inert.
+                    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\+?=\(", argument):
+                        if possible_guarded(argument, depth + 1):
+                            raise ValueError("compound declaration contains a guarded operation")
                     indexed = re.match(
                         r"^(?:[A-Za-z_][A-Za-z0-9_]*)?\[(.*)\](?:\+?=.*)?$", argument
                     )
@@ -626,7 +631,7 @@ def shell_tokens(command):
                 }
                 while position < len(words):
                     option = words[position].replace("\ue003", "")
-                    if words[position] in {";", "&", "&&", "|", "||", "\n"}:
+                    if words[position] and all(char in ";&|()<>\n" for char in words[position]):
                         break
                     position += 1
                     if option in valued or option == "-fprintf":
