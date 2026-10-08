@@ -53,17 +53,17 @@ Common issues with Claude Code, Gravity Stack tooling, and the development envir
 
 2. For npm servers, verify the package is installed:
    ```bash
-   npx @anthropic/mcp-playwright --version
+   npx @playwright/mcp@0.0.68 --version
    ```
 
-3. Check your `settings.json` for typos in the server config.
+3. Read `claude mcp list` and `claude mcp get <name>`; project registrations live in `.mcp.json`, not settings.json.
 
 4. Try running the server manually to see error output:
    ```bash
-   npx @anthropic/mcp-playwright
+   npx @playwright/mcp@0.0.68
    ```
 
-5. If a server consistently fails, temporarily remove it from `settings.json` and restart Claude Code. Add it back after resolving the issue.
+5. If a server consistently fails, preserve its configuration, then remove it with `claude mcp remove <name> --scope user` and re-register the verified command after resolving the issue.
 
 6. For API-dependent servers (Firecrawl, Perplexity), verify your API key is valid and not expired.
 
@@ -92,7 +92,7 @@ Common issues with Claude Code, Gravity Stack tooling, and the development envir
 
 4. Test the hook manually:
    ```bash
-   MCP_TOOL_INPUT_FILE_PATH="test.ts" node -e "console.log(process.env.MCP_TOOL_INPUT_FILE_PATH)"
+   printf '%s\n' '{"tool_name":"Read","tool_input":{"file_path":"test.ts"}}' | python3 ~/.claude/hooks/commit-gate.py
    ```
 
 ---
@@ -101,7 +101,7 @@ Common issues with Claude Code, Gravity Stack tooling, and the development envir
 
 **Symptoms**: Build errors mentioning unsupported syntax, missing APIs, or "SyntaxError: Unexpected token". Some packages fail to install.
 
-**Cause**: Your Node.js version is too old for the project dependencies. Next.js 16 requires Node.js 18.18.0 or later.
+**Cause**: Your Node.js version is too old for the project dependencies. The bundled Next.js 16.1.6 package requires Node.js 20.9.0 or later.
 
 **Fix**:
 

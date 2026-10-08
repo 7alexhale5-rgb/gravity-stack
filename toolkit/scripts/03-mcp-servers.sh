@@ -1,32 +1,59 @@
 #!/usr/bin/env bash
+# Register servers through Claude's supported config store, without overwriting existing entries.
 set -euo pipefail
-
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-echo "  Verifying MCP server packages..."
-
-# Check npm packages are accessible
-for pkg in "@playwright/mcp" "firecrawl-mcp" "@perplexity-ai/mcp-server" "@modelcontextprotocol/server-memory" "hn-mcp"; do
-  if npm list -g "$pkg" &>/dev/null 2>&1; then
-    echo -e "  ${GREEN}✓${NC} $pkg available"
+command -v claude >/dev/null || { echo "Claude CLI required for MCP registration" >&2; exit 1; }
+CONFIG_ROOT="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}")"
+registered() {
+  # Inspect the supported user store without starting servers or printing config.
+  python3 - "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" "$1" <<'PY'
+import json,sys
+from pathlib import Path
+path=Path(sys.argv[1])
+if not path.exists(): sys.exit(1)
+try:
+    data=json.loads(path.read_text())
+    servers=data.get('mcpServers', {})
+    if not isinstance(servers,dict): sys.exit(2)
+    entry=servers.get(sys.argv[2])
+    if entry is None: sys.exit(1)
+    if not isinstance(entry,dict): sys.exit(2)
+    if sys.argv[2] == 'memory' and isinstance(entry.get('env'), dict):
+        memory_path = entry['env'].get('MEMORY_FILE_PATH')
+        if memory_path is not None and (not isinstance(memory_path, str) or not Path(memory_path).is_absolute()):
+            sys.exit(2)
+    sys.exit(0 if any(isinstance(entry.get(k),str) and entry[k] for k in ('command','url')) else 2)
+except (OSError,ValueError,AttributeError): sys.exit(2)
+PY
+}
+register() {
+  local name="$1"; shift
+  local status=0
+  registered "$name" || status=$?
+  if [[ "$status" == 0 ]]; then
+    echo "  Registered already: $name (preserved)"
+  elif [[ "$status" != 1 ]]; then
+    echo "  FAIL user config unreadable or invalid: $name (preserved)" >&2
+    return 1
   else
-    echo -e "  ${GREEN}✓${NC} $pkg will be loaded on-demand via npx"
+    claude mcp add --scope user "$name" "$@" >/dev/null 2>&1 || { echo "  FAIL registration: $name" >&2; return 1; }
+    registered "$name" || { echo "  FAIL registration read-back: $name" >&2; return 1; }
+    echo "  Registered: $name"
+  fi
+}
+register playwright --transport stdio -- npx -y @playwright/mcp@0.0.68
+register firecrawl --transport stdio -- npx -y firecrawl-mcp@3.9.0
+register perplexity --transport stdio -- npx -y @perplexity-ai/mcp-server@0.8.2
+register memory --transport stdio --env "MEMORY_FILE_PATH=$CONFIG_ROOT/memory/graph.json" -- npx -y @modelcontextprotocol/server-memory@2026.1.26
+register hacker-news --transport stdio -- npx -y hn-mcp@1.0.0
+# Public documentation only, opt-in; no OpenAI API key needed.
+if [[ "${GRAVITY_INSTALL_OPENAI_DOCS:-0}" == 1 ]]; then
+  register openai-docs --transport http https://developers.openai.com/mcp
+fi
+for key in FIRECRAWL_API_KEY PERPLEXITY_API_KEY; do
+  if [[ -n "${!key:-}" ]]; then
+    echo "  $key present in this shell; authentication remains unverified"
+  else
+    echo "  $key absent; launch Claude from a securely configured shell before using that service"
   fi
 done
-
-# Check API keys
-if [ -n "${FIRECRAWL_API_KEY:-}" ]; then
-  echo -e "  ${GREEN}✓${NC} FIRECRAWL_API_KEY set"
-else
-  echo -e "  ${YELLOW}!${NC} FIRECRAWL_API_KEY not set (Firecrawl will not work without it)"
-fi
-
-if [ -n "${PERPLEXITY_API_KEY:-}" ]; then
-  echo -e "  ${GREEN}✓${NC} PERPLEXITY_API_KEY set"
-else
-  echo -e "  ${YELLOW}!${NC} PERPLEXITY_API_KEY not set (Perplexity will not work without it)"
-fi
-
-echo -e "  ${GREEN}✓${NC} MCP servers configured in settings.json"
+echo "  Registration checked. Restart Claude and test selected tools; connection and credentials are not proven here."
