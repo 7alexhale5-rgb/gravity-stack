@@ -56,6 +56,24 @@ def git_executable(word):
 def shell_tokens(command):
     """Keep literal punctuation distinct from shell operators after decoding."""
 
+    deferred_names = {"PS4", "BASH_ENV", "ENV", "ZDOTDIR", "SHELLOPTS", "BASHOPTS"}
+
+    def check_deferred_input(variable, value="", unresolved=False):
+        # These values become shell code or select code after ordinary parsing.
+        # Quoting an assignment protects it now, not when the shell uses it.
+        if variable not in deferred_names:
+            return
+        if variable == "PS4":
+            uncertain = unresolved or any(char in value for char in ("$", "`", "\ue002"))
+        else:
+            uncertain = unresolved or bool(value) or variable == "ZDOTDIR"
+        if uncertain:
+            raise ValueError("unresolved deferred shell execution input cannot be inspected")
+
+    for variable in deferred_names:
+        if variable in os.environ:
+            check_deferred_input(variable, os.environ[variable])
+
     def literal_test_bracket(text, position):
         """Recognize standalone Bash test syntax, retaining glob uncertainty."""
         start = position - 1 if position and text[position - 1] == "[" else position
@@ -271,6 +289,9 @@ def shell_tokens(command):
                     "unresolved arithmetic array assignment cannot be inspected"
                 )
             if indexed_assignment:
+                check_deferred_input(
+                    indexed_assignment.group(1), word[indexed_assignment.end() :], expanded
+                )
                 if indexed_assignment.group(
                     1
                 ) in integer_names and not literal_arithmetic(
@@ -283,6 +304,7 @@ def shell_tokens(command):
             if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\+?=", word):
                 variable, value = word.split("=", 1)
                 variable = variable.rstrip("+")
+                check_deferred_input(variable, value, expanded)
                 if variable in integer_names and (
                     expanded or not literal_arithmetic(value)
                 ):
@@ -392,6 +414,9 @@ def shell_tokens(command):
                 for argument in arguments:
                     if argument.startswith("-") or argument == "--":
                         continue
+                    if name != "unset":
+                        variable, separator, value = argument.partition("=")
+                        check_deferred_input(variable.rstrip("+"), value, not separator)
                     # Declaration builtins reparse whole compound assignments:
                     # outer shell quotes do not make their array indices inert.
                     if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\+?=\(", argument):
@@ -477,6 +502,27 @@ def shell_tokens(command):
                 else:
                     return True
                 continue
+            if name == "set":
+                position = index
+                while position < len(words):
+                    option = words[position].replace("\ue003", "")
+                    position += 1
+                    if option == "--" or not option.startswith(("-", "+")):
+                        break
+                    if "\ue002" in option:
+                        raise ValueError("unresolved shell option can enable tracing")
+                    if option.startswith("-") and "x" in option[1:]:
+                        raise ValueError("shell tracing can execute deferred prompt code")
+                    if option in {"-o", "+o"} and position < len(words):
+                        setting = words[position].replace("\ue003", "")
+                        if not setting.startswith(("-", "+")) and not all(
+                            char in ";&|()<>\n" for char in setting
+                        ):
+                            if "\ue002" in setting or option == "-o" and setting == "xtrace":
+                                raise ValueError("shell tracing can execute deferred prompt code")
+                            position += 1
+                head = False
+                continue
             if name in {"printf", "read", "mapfile", "readarray"}:
                 end = index
                 while end < len(words) and not (
@@ -500,6 +546,7 @@ def shell_tokens(command):
                         variable = target
                     else:
                         raise ValueError("unresolved printf variable target")
+                    check_deferred_input(variable, unresolved=True)
                     # Integer variable writes evaluate the resulting string as
                     # Bash arithmetic. Prove only this simple literal format;
                     # unresolved formats/values run in a separate invocation.
@@ -547,6 +594,7 @@ def shell_tokens(command):
                                 raise ValueError("unresolved input destination arithmetic cannot be inspected")
                         elif not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", target):
                             raise ValueError("unresolved input builtin variable target")
+                        check_deferred_input(variable, unresolved=True)
                         if variable in integer_names:
                             raise ValueError("unresolved input builtin integer assignment")
                 head = False
@@ -800,6 +848,8 @@ def shell_tokens(command):
                 # program strings are opaque and remain conservatively guarded.
                 for program_index in range(index, len(words)):
                     option = words[program_index].replace("\ue003", "")
+                    if option == "--xtrace" or re.fullmatch(r"-[A-Za-z]*x[A-Za-z]*", option):
+                        raise ValueError("shell tracing can execute deferred prompt code")
                     if option == "--command" or re.fullmatch(
                         r"-[A-Za-z]*c[A-Za-z]*", option
                     ):

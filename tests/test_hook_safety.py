@@ -531,6 +531,115 @@ class DestructiveHookTests(OwnedShellFixture):
 
 
 class CommitGateTests(OwnedShellFixture):
+    def assert_review39_refused(self, command):
+        for hook in COMMIT_HOOKS:
+            with self.subTest(command=command, hook=hook):
+                self.assertEqual(self.run_hook(hook, command), (2, 0))
+        with self.subTest(command=command, hook="destructive"):
+            self.assertEqual(DestructiveHookTests().decision(command), "deny")
+
+    def test_review39_xtrace_executes_only_owned_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix="gravity39-trace-") as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = {"PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                   "HOME": str(root), "FAKE_GIT_LOG": str(log)}
+            for operation in ("commit -am broken", "push --force origin main"):
+                for trace in ("set -x", "set -ex", "set -o xtrace", "builtin set -x", "command set -x"):
+                    command = "PS4=" + shlex.quote("$(git " + operation + ")") + "; " + trace + "; true"
+                    log.write_text("")
+                    actual = subprocess.run(["bash", "-c", command], cwd=root, env=env,
+                                            capture_output=True, timeout=5)
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertIn(operation, log.read_text().splitlines())
+                    self.assert_review39_refused(command)
+
+    def test_review39_startup_files_execute_only_owned_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix="gravity39-startup-") as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = {"PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                   "HOME": str(root), "FAKE_GIT_LOG": str(log)}
+            startup = root / "startup"
+            for operation in ("commit -am broken", "push --force origin main"):
+                startup.write_text("git " + operation + "\n")
+                (root / ".zshenv").write_text("git " + operation + "\n")
+                selected = "BASH_ENV=" + shlex.quote(str(startup))
+                commands = [selected + " bash -c ':'",
+                            "env " + selected + " bash -c ':'",
+                            "export " + selected + "; bash -c ':'",
+                            selected + " command bash -c ':'",
+                            selected + " exec bash -c ':'",
+                            selected + " nice bash -c ':'",
+                            "BASH_ENV=<(printf '%s\\n' " + shlex.quote("git " + operation) + ") bash -c ':'",
+                            "ENV=" + shlex.quote(str(startup)) + " sh -ic ':'"]
+                if shutil.which("zsh"):
+                    commands.append("ZDOTDIR=" + shlex.quote(str(root)) + " zsh -c ':'")
+                for command in commands:
+                    log.write_text("")
+                    actual = subprocess.run(["bash", "-c", command], cwd=root, env=env,
+                                            capture_output=True, timeout=5)
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertIn(operation, log.read_text().splitlines())
+                    self.assert_review39_refused(command)
+
+    def test_review39_deferred_selector_writes_and_wrappers(self):
+        for variable in ("PS4", "BASH_ENV", "ENV", "ZDOTDIR", "SHELLOPTS", "BASHOPTS"):
+            value = "'$(git commit -am broken)'" if variable == "PS4" else "/owned/startup"
+            for form in ("{name}={value}; true", "env {name}={value} bash -c ':'",
+                         "export {name}={value}; true", "declare {name}={value}; true",
+                         "typeset {name}={value}; true", "readonly {name}={value}; true",
+                         "builtin export {name}={value}; true",
+                         "printf -v {name} %s {value}; true", "read {name} </owned/input"):
+                self.assert_review39_refused(form.format(name=variable, value=value))
+        for wrapper in ("", "command ", "exec ", "env ", "nice ", "nohup "):
+            for shell in ("bash -xc ':'", "bash --xtrace -c ':'", "sh -xc ':'", "zsh -xc ':'"):
+                self.assert_review39_refused(wrapper + shell)
+        for command in ("set -x; true", "set -ex; true", "set -o xtrace; true",
+                        "builtin set -x; true", "SHELLOPTS=xtrace bash -c ':'"):
+            self.assert_review39_refused(command)
+
+    def test_review39_inherited_uncertainty_reaches_all_entrypoints(self):
+        with tempfile.TemporaryDirectory(prefix="gravity39-inherited-") as temporary:
+            root = Path(temporary)
+            startup = root / "startup"
+            startup.write_text(":\n")
+            (root / ".zshenv").write_text(":\n")
+            # Startup content is owned and harmless: a shell may source it before
+            # Python starts. These assertions prove the guard verdict only.
+            for variable, value in (("BASH_ENV", str(startup)), ("ENV", str(startup)),
+                                    ("ZDOTDIR", str(root)), ("PS4", "${unknown}"),
+                                    ("SHELLOPTS", "xtrace")):
+                with mock.patch.dict(os.environ, {variable: value}):
+                    for command in ("true", "bash -c ':'", "env bash -c ':'"):
+                        with self.subTest(variable=variable, command=command):
+                            self.assert_review39_refused(command)
+
+    def test_review39_printed_data_and_inert_controls(self):
+        for command in ("printf '%s' 'PS4=$(git commit -am literal)'",
+                        "printf '%s' 'BASH_ENV=/owned bash -c true'",
+                        "printf '%s' 'ENV=/owned ZDOTDIR=/owned set -x'",
+                        "printf '%s' 'bash -xc true'", "PS4='+ '; true",
+                        "set +x; true", "set -- -x; true", "set -o; true",
+                        "BASH_ENV= ENV= true", "bash -c ':'", "env bash -c ':'",
+                        "cat <<'EOF'\nPS4='$(git commit -am literal)'; set -x\nEOF\n",
+                        "git push origin feature"):
+            for hook in COMMIT_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+            with self.subTest(command=command, hook="destructive"):
+                self.assertEqual(DestructiveHookTests().decision(command), "allow")
+
     def test_review38_continued_heredoc_headers_execute_only_fake_git(self):
         with tempfile.TemporaryDirectory(prefix="gravity38-heredoc-") as temporary:
             root = Path(temporary)
@@ -3535,7 +3644,7 @@ class CommitGateTests(OwnedShellFixture):
                 and node.name
                 in {"shell_continuations", "git_executable", "shell_tokens"}
             ]
-            namespace = {"Path": Path, "shlex": shlex, "re": re}
+            namespace = {"Path": Path, "shlex": shlex, "re": re, "os": os}
             exec(
                 compile(
                     ast.Module(body=functions, type_ignores=[]),
