@@ -937,7 +937,7 @@ def shell_tokens(command):
                     operand_pending = False
                     continue
                 if getattr(word, "expanded", False) and not re.match(
-                    r"^[A-Za-z_][A-Za-z0-9_]*=", word
+                    r"^[A-Za-z_][A-Za-z0-9_]*\+?=", word
                 ):
                     raise ValueError("expanded executable cannot be inspected")
                 if Path(word).is_absolute():
@@ -968,7 +968,7 @@ def shell_tokens(command):
                         wrapper = "time"
                     continue
                 if word in {"env", "exec", "command", "builtin"} or re.match(
-                    r"^[A-Za-z_][A-Za-z0-9_]*=", word
+                    r"^[A-Za-z_][A-Za-z0-9_]*\+?=", word
                 ):
                     if word in {"env", "exec"}:
                         heads.append(word)
@@ -1015,12 +1015,14 @@ def shell_tokens(command):
     quote_state = ""
     arithmetic_depth = 0
     had_documents = False
+    previous_header_continued = False
     while line_index < len(lines):
         header = lines[line_index]
         line_index += 1
         documents = []
         header_substitution = False
         escaped_header = False
+        header_continued = False
         position = 0
         while position < len(header):
             char = header[position]
@@ -1028,6 +1030,7 @@ def shell_tokens(command):
                 escaped_header = False
             elif char == "\\" and quote_state != chr(39):
                 escaped_header = True
+                header_continued |= header[position + 1:] == "\n"
             elif arithmetic_depth:
                 if char == "`" or header.startswith("$(", position):
                     header_substitution = True
@@ -1077,6 +1080,10 @@ def shell_tokens(command):
             position += 1
         code.append(header)
         if documents:
+            # A continued header is shell code until its logical newline. Do
+            # not consume its pipeline as inert heredoc body text.
+            if header_continued or previous_header_continued:
+                raise ValueError("continued heredoc header cannot be inspected")
             had_documents = True
             if header_substitution and possible_guarded(header):
                 raise ValueError(
@@ -1094,6 +1101,7 @@ def shell_tokens(command):
                 raise ValueError(
                     "heredoc supplied to executable shell cannot be inspected"
                 )
+        previous_header_continued = header_continued
         for delimiter, strip_tabs, quoted in documents:
             while line_index < len(lines):
                 body = lines[line_index]
@@ -1205,6 +1213,7 @@ def shell_tokens(command):
     # search patterns and printed strings containing Git commands are ordinary data.
     group = []
     pipeline_pending = False
+    configuration_environment = False
     for word, operator in tokens + [(";", True)]:
         if operator and word.replace("\n", "") in ("|", "|&"):
             group.append((word, operator))
@@ -1220,6 +1229,25 @@ def shell_tokens(command):
             and any(char in word for char in ";&\n")
         ):
             heads = executable_heads(group)
+            at_command_head = True
+            for value, is_operator in group:
+                if is_operator:
+                    at_command_head = True
+                elif at_command_head:
+                    assignment = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\+?=", value)
+                    if assignment:
+                        name = assignment.group(1)
+                        # Git environment also selects config, repository,
+                        # namespace and transport. Never guess its push effects.
+                        configuration_environment |= name in ("HOME", "XDG_CONFIG_HOME") or name.startswith("GIT_")
+                        continue
+                    if value in ("builtin", "command", "env", "exec", "--", "-p"):
+                        continue
+                    at_command_head = False
+            if any(git_executable(head) for head in heads) and any(
+                not is_operator and value == "push" for value, is_operator in group
+            ) and (configuration_environment or any(head in ("env", "exec") for head in heads)):
+                raise ValueError("push configuration environment cannot be inspected")
             if any(
                 head in {"bash", "sh", "zsh", "dash", "ksh"} for head in heads
             ) and any(
@@ -1250,7 +1278,6 @@ def shell_tokens(command):
         else:
             group.append((word, operator))
     return tokens
-
 
 def git_operation(args):
     pos = 0
@@ -1298,7 +1325,10 @@ if (any(git_executable(word) for word, operator in tokens if not operator)
     prior_uncertain = False
     for statement in statements:
         argv = list(statement)
-        while argv and (argv[0] in ("builtin", "command") or argv[0] in ("--", "-p")):
+        while argv and (
+            re.match(r"^[A-Za-z_][A-Za-z0-9_]*\+?=", argv[0])
+            or argv[0] in ("builtin", "command", "--", "-p")
+        ):
             argv.pop(0)
         if not argv:
             continue

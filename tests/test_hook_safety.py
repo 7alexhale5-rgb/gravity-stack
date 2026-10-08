@@ -531,6 +531,192 @@ class DestructiveHookTests(OwnedShellFixture):
 
 
 class CommitGateTests(OwnedShellFixture):
+    def test_review38_continued_heredoc_headers_execute_only_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix="gravity38-heredoc-") as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = {
+                "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                "HOME": str(root),
+                "XDG_CONFIG_HOME": str(root / "xdg"),
+                "FAKE_GIT_LOG": str(log),
+            }
+            for delimiter in ("EOF", "'EOF'", '"EOF"'):
+                for header in (
+                    "cat <<{delimiter} \\\n| bash\n",
+                    "cat <<{delimiter} | \\\nbash\n",
+                    "cat <<{delimiter} \\\n\\\n| bash\n",
+                    "cat \\\n<<{delimiter} \\\n| bash\n",
+                    "cat <<-{delimiter} \\\n| bash\n",
+                ):
+                    for operation in ("commit -am broken", "push --force origin main"):
+                        command = (
+                            header.format(delimiter=delimiter)
+                            + "git "
+                            + operation
+                            + "\nEOF\n"
+                        )
+                        log.write_text("")
+                        actual = subprocess.run(
+                            ["bash", "-c", command],
+                            cwd=root,
+                            env=env,
+                            capture_output=True,
+                            timeout=5,
+                        )
+                        self.assertEqual(actual.returncode, 0, actual.stderr)
+                        self.assertEqual(log.read_text().strip(), operation)
+                        for hook in COMMIT_HOOKS:
+                            with self.subTest(command=command, hook=hook):
+                                self.assertEqual(self.run_hook(hook, command), (2, 0))
+                        with self.subTest(command=command, hook="destructive"):
+                            self.assertEqual(
+                                DestructiveHookTests().decision(command), "deny"
+                            )
+
+    def test_review38_owned_configuration_changes_fake_push_effects(self):
+        with tempfile.TemporaryDirectory(prefix="gravity38-config-") as temporary:
+            root = Path(temporary)
+            home, alternate, xdg, clean, other, binary = (
+                root / name
+                for name in ("home", "alternate", "xdg", "clean", "other", "bin")
+            )
+            for path in (home, alternate, xdg / "git", clean, other, binary):
+                path.mkdir(parents=True)
+            real_git = shutil.which("git")
+            env = {
+                "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                "HOME": str(home),
+                "XDG_CONFIG_HOME": str(home / "xdg"),
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "REAL_GIT": real_git,
+                "FAKE_GIT_LOG": str(root / "calls"),
+            }
+            for repo in (clean, other):
+                subprocess.run(
+                    [real_git, "init", "-q", str(repo)],
+                    env=env,
+                    check=True,
+                    capture_output=True,
+                )
+            settings = (
+                '[remote "origin"]\n mirror = true\n push = +HEAD:refs/heads/main\n'
+            )
+            (alternate / ".gitconfig").write_text(settings)
+            (xdg / "git/config").write_text(settings)
+            with (other / ".git/config").open("a") as output:
+                output.write(settings)
+            fake = binary / "git"
+            fake.write_text(
+                '#!/bin/sh\n[ "$1" = push ] || exit 91\n'
+                'mirror=$("$REAL_GIT" config --get remote.origin.mirror)\n'
+                'ref=$("$REAL_GIT" config --get remote.origin.push)\n'
+                'printf "mirror=%s\\nref=%s\\n" "$mirror" "$ref" > "$FAKE_GIT_LOG"\n'
+            )
+            fake.chmod(0o755)
+            selectors = (
+                "HOME=" + shlex.quote(str(alternate)),
+                "XDG_CONFIG_HOME=" + shlex.quote(str(xdg)),
+                "GIT_CONFIG_GLOBAL=" + shlex.quote(str(alternate / ".gitconfig")),
+                "GIT_DIR=" + shlex.quote(str(other / ".git")),
+                "GIT_COMMON_DIR=" + shlex.quote(str(other / ".git")),
+                "GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=remote.origin.mirror GIT_CONFIG_VALUE_0=true "
+                "GIT_CONFIG_KEY_1=remote.origin.push GIT_CONFIG_VALUE_1=+HEAD:refs/heads/main",
+            )
+            for selector in selectors:
+                for prefix in ("", "LABEL=fixture "):
+                    command = prefix + selector + " git push origin"
+                    actual = subprocess.run(
+                        ["bash", "-c", command],
+                        cwd=clean,
+                        env=env,
+                        capture_output=True,
+                        timeout=5,
+                    )
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertEqual(
+                        (root / "calls").read_text(),
+                        "mirror=true\nref=+HEAD:refs/heads/main\n",
+                    )
+                    for hook in COMMIT_HOOKS:
+                        with self.subTest(
+                            selector=selector.split("=", 1)[0], prefix=prefix, hook=hook
+                        ):
+                            self.assertEqual(self.run_hook(hook, command), (2, 0))
+                    with self.subTest(
+                        selector=selector.split("=", 1)[0],
+                        prefix=prefix,
+                        hook="destructive",
+                    ):
+                        self.assertEqual(
+                            DestructiveHookTests().decision(command), "deny"
+                        )
+
+    def test_review38_push_selector_and_wrapper_pressure_matrix(self):
+        for name in (
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "GIT_CONFIG",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_COUNT",
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+            "GIT_NAMESPACE",
+        ):
+            for form in (
+                "{name}=/owned git push origin",
+                "LABEL=fixture {name}=/owned command git push origin",
+                "env {name}=/owned git push origin",
+                "{name}=/owned /usr/bin/git --no-pager push origin",
+                "{name}=/owned; git push origin",
+            ):
+                command = form.format(name=name)
+                for hook in COMMIT_HOOKS:
+                    with self.subTest(name=name, form=form, hook=hook):
+                        self.assertEqual(self.run_hook(hook, command), (2, 0))
+                with self.subTest(name=name, form=form, hook="destructive"):
+                    self.assertEqual(DestructiveHookTests().decision(command), "deny")
+
+    def test_review38_assignment_prefixed_push_keeps_prior_state_check(self):
+        for command in (
+            "touch owned; LABEL=fixture git push origin feature",
+            "git config remote.origin.mirror true; LANG=C git push origin feature",
+            "touch owned; LABEL=fixture command git push origin feature",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(DestructiveHookTests().decision(command), "deny")
+
+    def test_review38_inert_heredocs_and_ordinary_push_controls(self):
+        for command in (
+            "cat <<'EOF'\ngit push --force origin main\nEOF\n",
+            "cat <<'EOF'\nHOME=/alternate git push origin\nEOF\n",
+            "cat <<'EOF'\n\\\n| bash\ngit commit -am literal\nEOF\n",
+            "cat <<EOF\nordinary content\nEOF\n",
+            "printf '%s' 'HOME=/alternate git push origin'",
+            "git push origin feature",
+            "LABEL=fixture git push origin feature",
+            "LANG=C TZ=UTC command git push origin feature",
+            "echo healthy; LABEL=fixture git push origin feature",
+            "HOME=/owned git status",
+        ):
+            for hook in COMMIT_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+            with self.subTest(command=command, hook="destructive"):
+                self.assertEqual(DestructiveHookTests().decision(command), "allow")
+
     def test_review37_find_grouped_boundaries_execute_guarded_git(self):
         with tempfile.TemporaryDirectory(prefix="gravity37-find-") as temporary:
             root = Path(temporary)
