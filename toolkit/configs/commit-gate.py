@@ -119,8 +119,8 @@ def shell_tokens(command):
                     r"^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?:?=", reference
                 )
                 if assignment:
-                    if deferred_state:
-                        raise ValueError("deferred callback parameter assignment cannot be inspected")
+                    if deferred_state or not literal_arithmetic(reference[assignment.end():]):
+                        raise ValueError("unproved parameter assignment arithmetic cannot be inspected")
                     check_deferred_input(assignment.group(1), unresolved=True)
                 indexed = re.match(r"^[A-Za-z_][A-Za-z0-9_]*\[(.*)\]", reference)
                 if (
@@ -215,7 +215,10 @@ def shell_tokens(command):
                     ending += 1
                 if ending >= len(text):
                     raise ValueError("unterminated executable shell substitution")
-                if possible_guarded(text[beginning:ending], depth + 1, deferred_state=deferred_state):
+                # Substitutions inherit shell attributes, but this pass precedes
+                # outer declaration collection. Treat writes as unproved rather
+                # than assuming fresh string variables in the nested shell.
+                if possible_guarded(text[beginning:ending], depth + 1, deferred_state=True):
                     return text, True
                 # Output is unknown, even when the generating command is safe.
                 rewritten.append("\ue002SUBSTITUTION")

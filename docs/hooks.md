@@ -111,6 +111,10 @@ Explicit `sudo` login or shell modes are also refused, even with a child command
 because wrapper-selected startup files remain unproved. This includes combined
 short options and replaces the earlier allowance for `sudo -s` printed data.
 Diagnostics name refused startup/tracing keys only.
+Substitutions inherit variable attributes from the calling shell. Variable writes
+inside executable substitutions remain unproved and are refused, including
+declaration and input builtins. Parameter assignments require simple literal
+arithmetic values outside callbacks; printed single-quoted examples stay data.
 Plain literal `shell -c` bodies remain supported. This hook does not inspect
 shell-specific default startup files, including zsh's `~/.zshenv` when no
 `ZDOTDIR` is inherited. Treat those machine-owned files as a separate trust

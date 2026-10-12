@@ -4689,5 +4689,92 @@ class Review48NestedCallbacks(unittest.TestCase):
                             self.assertTrue(self.command(hook,command)[1])
 
 
+class Review49InheritedSubstitutions(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+    prefix = Review48.prefix
+
+    def test_writes_inside_substitutions_cannot_assume_fresh_attributes(self):
+        tails = (
+            'printf %s "$(number=expression)"',
+            "echo `number=expression`",
+            "cat <(number=expression)",
+            'printf %s "$(export number=expression)"',
+            'echo "$(printf -v number %s expression)"',
+            'echo "$(echo "$(number=expression)")"',
+        )
+        for tail in tails:
+            for hook in G43_HOOKS:
+                with self.subTest(tail=tail, hook=hook):
+                    self.assertTrue(
+                        self.command(hook, self.prefix + "declare -i number; " + tail)[
+                            1
+                        ]
+                    )
+
+    def test_parameter_writes_outside_callbacks_cannot_assume_string_attributes(self):
+        for tail in (
+            ': "${number:=expression}"',
+            ': "${number=expression}"',
+            'echo "${unused:-${number:=expression}}"',
+            'echo "$(echo "${number:=expression}")"',
+        ):
+            for hook in G43_HOOKS:
+                with self.subTest(tail=tail, hook=hook):
+                    self.assertTrue(
+                        self.command(hook, self.prefix + "declare -i number; " + tail)[
+                            1
+                        ]
+                    )
+
+    def test_owned_runtime_confirms_arithmetic_without_real_git(self):
+        with tempfile.TemporaryDirectory(prefix="gravity49-owned-") as directory:
+            root = Path(directory)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$OWNED_GIT_LOG"\n')
+            fake.chmod(0o755)
+            environment = {
+                "PATH": str(binary) + os.pathsep + "/usr/bin:/bin",
+                "HOME": str(root),
+                "OWNED_GIT_LOG": str(log),
+            }
+            for tail in (
+                'printf %s "$(number=expression)"',
+                ': "${number:=expression}"',
+            ):
+                with self.subTest(tail=tail):
+                    log.write_text("")
+                    command = self.prefix + "declare -i number; " + tail
+                    result = subprocess.run(
+                        ["/bin/bash", "-c", command],
+                        cwd=root,
+                        env=environment,
+                        capture_output=True,
+                        text=True,
+                        timeout=3,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("commit --dry-run", log.read_text())
+                    for hook in G43_HOOKS:
+                        self.assertTrue(self.command(hook, command)[1])
+
+    def test_literal_printing_and_read_only_substitutions_stay_allowed(self):
+        for command in (
+            'printf %s "$(printf %s hello)"',
+            "echo `pwd`",
+            "printf %s '${number:=expression}'",
+            ': "${label:=3}"',
+            'declare -i number; echo "$number"',
+        ):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
