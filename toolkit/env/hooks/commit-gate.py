@@ -275,6 +275,11 @@ def shell_tokens(command):
                 redirection_operand = False
                 continue
             if raw and all(c in ";&|()<>\n" for c in raw):
+                signature = re.fullmatch(r"\(\)\n*", raw) or all(c == "\n" for c in raw)
+                signature = signature or (raw == "(" and index < len(words) and re.fullmatch(r"\)\n*", words[index]))
+                signature = signature or (re.fullmatch(r"\)\n*", raw) and index >= 2 and words[index - 2] == "(")
+                if function_pending and not signature:
+                    raise ValueError("unsupported nonbrace function body cannot be inspected")
                 if wrapper_operand:
                     raise ValueError("missing wrapper option operand")
                 if any(c in "<>" for c in raw):
@@ -291,8 +296,14 @@ def shell_tokens(command):
                     deferred_state = body_states.pop()
             if not head:
                 continue
+            if function_pending:
+                raise ValueError("unsupported nonbrace function body cannot be inspected")
             if (re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", word)
-                    and index < len(words) and words[index] == "()"):
+                    and index < len(words) and (
+                        re.fullmatch(r"\(\)\n*", words[index])
+                        or (words[index] == "(" and index + 1 < len(words)
+                            and re.fullmatch(r"\)\n*", words[index + 1]))
+                    )):
                 function_pending = True
             if (
                 word.isdigit()
@@ -501,6 +512,7 @@ def shell_tokens(command):
                 binding = words[index].replace("\ue003", "")
                 if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", binding):
                     raise ValueError("unresolved loop binding cannot be inspected")
+                check_deferred_input(binding, unresolved=True)
                 if deferred_state:
                     raise ValueError("deferred loop variable mutation cannot be inspected")
                 if binding in integer_names:

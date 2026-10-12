@@ -4831,5 +4831,46 @@ class Review50DeferredFunctionsAndLoops(unittest.TestCase):
                 self.assertFalse(denied, result.stdout + result.stderr)
 
 
+
+class Review51FunctionFormsAndLoopSelectors(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+    prefix = Review48.prefix
+
+    def test_nonbrace_function_bodies_cannot_hide_future_integer_writes(self):
+        for definition in ('fill() ( number=expression; ); ', 'function fill() ( number=expression; ); ', 'fill() if true; then number=expression; fi; '):
+            for hook in G43_HOOKS:
+                with self.subTest(definition=definition, hook=hook):
+                    self.assertTrue(self.command(hook, self.prefix + definition + 'declare -i number; fill')[1])
+
+    def test_loop_bindings_cannot_select_deferred_shell_code(self):
+        for variable in ('BASH_ENV', 'ENV', 'PS4', 'ZDOTDIR', 'SHELLOPTS', 'BASHOPTS'):
+            for loop in ('for ' + variable + ' in /tmp/unknown-startup; do :; done', 'select ' + variable + ' in /tmp/unknown-startup; do break; done', 'for ' + variable + '; do :; done'):
+                for hook in G43_HOOKS:
+                    with self.subTest(variable=variable, loop=loop, hook=hook):
+                        self.assertTrue(self.command(hook, 'export ' + variable + '=; ' + loop)[1])
+
+    def test_owned_subshell_function_and_exported_loop_use_only_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix='gravity51-owned-') as directory:
+            root = Path(directory); binary = root / 'bin'; binary.mkdir(); log = root / 'calls'
+            fake = binary / 'git'; fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$OWNED_GIT_LOG"\n'); fake.chmod(0o755)
+            startup = root / 'startup.sh'; startup.write_text('git commit --dry-run\n')
+            environment = {'PATH': str(binary) + os.pathsep + '/usr/bin:/bin', 'HOME': str(root), 'OWNED_GIT_LOG': str(log)}
+            for command in (self.prefix + 'fill() ( number=expression; ); declare -i number; fill', 'export BASH_ENV=; for BASH_ENV in ' + shlex.quote(str(startup)) + '; do /bin/bash -c ":"; done'):
+                log.write_text(''); result = subprocess.run(['/bin/bash', '-c', command], cwd=root, env=environment, capture_output=True, text=True, timeout=3)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('commit --dry-run', log.read_text())
+                for hook in G43_HOOKS:
+                    self.assertTrue(self.command(hook, command)[1])
+    def test_linebroken_and_spaced_signatures_keep_deferred_body_state(self):
+        for signature in ('fill()\n\n', 'fill( ) ', 'function fill\n\n'):
+            for hook in G43_HOOKS:
+                with self.subTest(signature=signature, hook=hook):
+                    self.assertTrue(self.command(hook, self.prefix + signature + '{ number=expression; }; declare -i number; fill')[1])
+                    result, denied = self.command(hook, signature + '{ printf %s hello; }; fill')
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
