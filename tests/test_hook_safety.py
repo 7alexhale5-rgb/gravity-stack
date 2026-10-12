@@ -4776,5 +4776,60 @@ class Review49InheritedSubstitutions(unittest.TestCase):
                     self.assertEqual(result.returncode, 0)
 
 
+
+class Review50DeferredFunctionsAndLoops(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+    prefix = Review48.prefix
+
+    def test_deferred_functions_cannot_assume_declaration_time_attributes(self):
+        for definition in ('function fill { number=expression; }; ', 'fill() { number=expression; }; ', 'function fill() { export number=expression; }; '):
+            for hook in G43_HOOKS:
+                with self.subTest(definition=definition, hook=hook):
+                    self.assertTrue(self.command(hook, self.prefix + definition + 'declare -i number; fill')[1])
+
+    def test_implicit_loop_bindings_are_integer_writes(self):
+        for loop in ('for number in expression; do :; done', 'select number in expression; do break; done', 'for number; do :; done'):
+            for hook in G43_HOOKS:
+                with self.subTest(loop=loop, hook=hook):
+                    self.assertTrue(self.command(hook, self.prefix + 'declare -i number; ' + loop)[1])
+        for hook in G43_HOOKS:
+            self.assertTrue(self.command(hook, 'fill() { for number in expression; do :; done; }; declare -i number; fill')[1])
+
+    def test_owned_runtime_functions_and_loops_use_only_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix='gravity50-owned-') as directory:
+            root = Path(directory); binary = root / 'bin'; binary.mkdir(); log = root / 'calls'
+            fake = binary / 'git'; fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$OWNED_GIT_LOG"\n'); fake.chmod(0o755)
+            environment = {'PATH': str(binary) + os.pathsep + '/usr/bin:/bin', 'HOME': str(root), 'OWNED_GIT_LOG': str(log)}
+            for tail in ('function fill { number=expression; }; declare -i number; fill', 'fill() { number=expression; }; declare -i number; fill', 'declare -i number; for number in expression; do :; done', 'declare -i number; select number in expression; do break; done'):
+                log.write_text(''); command = self.prefix + tail
+                result = subprocess.run(['/bin/bash', '-c', command], input='1\n', cwd=root, env=environment, capture_output=True, text=True, timeout=3)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('commit --dry-run', log.read_text())
+                for hook in G43_HOOKS:
+                    self.assertTrue(self.command(hook, command)[1])
+
+    def test_read_only_functions_and_plain_string_loops_stay_allowed(self):
+        for command in ('function greet { printf %s hello; }; greet', 'greet() { printf %s hello; }; greet; label=text', 'for label in one two; do printf %s "$label"; done', 'select label in one two; do break; done', 'declare -i number; for number in 1 2; do :; done'):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+    def test_explicit_local_array_does_not_inherit_global_integer_arithmetic(self):
+        with tempfile.TemporaryDirectory(prefix="gravity50-local-array-") as directory:
+            root = Path(directory); binary = root / "bin"; binary.mkdir(); log = root / "calls"
+            fake = binary / "git"; fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$OWNED_GIT_LOG"\n'); fake.chmod(0o755)
+            environment = {"PATH": str(binary) + os.pathsep + "/usr/bin:/bin", "HOME": str(root), "OWNED_GIT_LOG": str(log)}
+            command = self.prefix + "one=expression; declare -i items; f() { local -a 'items=(one two)'; printf '%s\\n' \"${items[@]}\"; }; f"
+            result = subprocess.run(["/bin/bash", "-c", command], cwd=root, env=environment, capture_output=True, text=True, timeout=3)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "one\ntwo\n")
+            self.assertFalse(log.exists(), "ordinary local array data must not run fake Git")
+            for hook in G43_HOOKS:
+                result, denied = self.command(hook, command)
+                self.assertFalse(denied, result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

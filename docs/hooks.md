@@ -115,6 +115,10 @@ Substitutions inherit variable attributes from the calling shell. Variable write
 inside executable substitutions remain unproved and are refused, including
 declaration and input builtins. Parameter assignments require simple literal
 arithmetic values outside callbacks; printed single-quoted examples stay data.
+Function bodies also run later, so their variable writes remain unproved.
+Explicit local noninteger arrays keep their existing index/substitution checks.
+Loop bindings count as writes: integer bindings need literal arithmetic inputs;
+bindings inside deferred bodies remain unproved. Plain string loops stay supported.
 Plain literal `shell -c` bodies remain supported. This hook does not inspect
 shell-specific default startup files, including zsh's `~/.zshenv` when no
 `ZDOTDIR` is inherited. Treat those machine-owned files as a separate trust

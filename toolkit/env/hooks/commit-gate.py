@@ -262,6 +262,8 @@ def shell_tokens(command):
         wrapper = ""
         wrapper_operand = False
         integer_names = set()
+        function_pending = False
+        body_states = []
         found_guarded = False
         index = 0
         while index < len(words):
@@ -280,8 +282,18 @@ def shell_tokens(command):
                 else:
                     head, wrapper = True, ""
                 continue
+            if head and word in {"{", "}"} and "\ue003" not in raw:
+                if word == "{":
+                    body_states.append(deferred_state)
+                    deferred_state = deferred_state or function_pending
+                    function_pending = False
+                elif body_states:
+                    deferred_state = body_states.pop()
             if not head:
                 continue
+            if (re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", word)
+                    and index < len(words) and words[index] == "()"):
+                function_pending = True
             if (
                 word.isdigit()
                 and index < len(words)
@@ -364,7 +376,19 @@ def shell_tokens(command):
             if expanded:
                 raise ValueError("expanded executable cannot be inspected")
             name = word if word == "." else Path(word).name
-            if deferred_state and name in {"declare", "typeset", "local", "export", "readonly", "unset", "read", "mapfile", "readarray", "let"}:
+            # Explicit local arrays establish fresh noninteger local bindings.
+            # Their compound values still pass the index/substitution checks below.
+            local_array = False
+            if name == "local" and index < len(words) and words[index] == "-a":
+                end = index + 1
+                while end < len(words) and not all(c in ";&|()<>\n" for c in words[end]):
+                    end += 1
+                local_array = end > index + 1 and all(
+                    "\ue002" not in value and re.fullmatch(
+                        r"[A-Za-z_][A-Za-z0-9_]*=\(.*\)", value.replace("\ue003", "")
+                    ) for value in words[index + 1:end]
+                )
+            if deferred_state and not local_array and name in {"declare", "typeset", "local", "export", "readonly", "unset", "read", "mapfile", "readarray", "let"}:
                 raise ValueError("deferred callback variable mutation cannot be inspected")
             if name in {"[[", "[", "test"}:
                 end = index
@@ -458,7 +482,7 @@ def shell_tokens(command):
                         raise ValueError(
                             "unresolved builtin arithmetic array index cannot be inspected"
                         )
-                    if integer or (separator and variable_name in integer_names):
+                    if integer or (separator and variable_name in integer_names and not local_array):
                         if not target or (target.group(2) is not None and not literal_arithmetic(target.group(2))) or (
                             separator
                             and ("\ue002" in value or not literal_arithmetic(value))
@@ -470,6 +494,26 @@ def shell_tokens(command):
                             integer_names.add(variable_name)
                 index = end
                 head = False
+                continue
+            if name in {"for", "select"}:
+                if index >= len(words):
+                    raise ValueError("missing loop binding cannot be inspected")
+                binding = words[index].replace("\ue003", "")
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", binding):
+                    raise ValueError("unresolved loop binding cannot be inspected")
+                if deferred_state:
+                    raise ValueError("deferred loop variable mutation cannot be inspected")
+                if binding in integer_names:
+                    value_start = index + 1
+                    if value_start >= len(words) or words[value_start] != "in":
+                        raise ValueError("implicit integer loop inputs cannot be inspected")
+                    value_start += 1
+                    end = value_start
+                    while end < len(words) and not all(c in ";&|()<>\n" for c in words[end]):
+                        if not literal_arithmetic(words[end].replace("\ue003", "")):
+                            raise ValueError("unresolved integer loop value cannot be inspected")
+                        end += 1
+                head = True
                 continue
             if name in {
                 "if",
@@ -926,6 +970,7 @@ def shell_tokens(command):
                 # The declaration name is data; the body starts a new executable
                 # context. Function bodies containing guarded work are refused.
                 index += 1
+                function_pending = True
                 head = True
                 continue
             if name in {"eval", "source", "."}:
