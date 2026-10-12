@@ -107,6 +107,9 @@ unproved shell state. Trailing startup or tracing changes are inspected even aft
 a literal Git operation. Unproved Git redirections and other uncertain executable
 forms fail closed. Login/interactive shell modes, unknown startup options and
 login-style executable names are refused before accepting a literal shell body.
+Explicit `sudo` login or shell modes are also refused, even with a child command,
+because wrapper-selected startup files remain unproved. This includes combined
+short options and replaces the earlier allowance for `sudo -s` printed data.
 Diagnostics name refused startup/tracing keys only.
 Plain literal `shell -c` bodies remain supported. This hook does not inspect
 shell-specific default startup files, including zsh's `~/.zshenv` when no
@@ -117,8 +120,11 @@ Inspection fails closed when command payloads, runtimes, or shell state cannot b
 proved. This applies before determining whether a destination uses TypeScript.
 Inherited shell startup selectors or executable tracing inputs can run code before
 an otherwise harmless command, so those inputs are conservatively refused even
-for `true`. Fresh setup probes the bundled gate before creating settings; a refused
-probe leaves no new registration. Existing customized settings remain preserved.
+for `true`. Fresh setup installs the gate without overwriting an existing file,
+checks its bytes and probes the installed path before creating settings. A differing
+customized gate or refused probe leaves no new registration. A later server setup
+failure cannot leave a newly registered gate path missing. Existing customized
+settings remain preserved.
 Avoid inherited startup selectors in the controlled hook environment;
 this restriction is not a claim that every selector value is harmful.
 

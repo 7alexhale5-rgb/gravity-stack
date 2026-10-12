@@ -798,6 +798,25 @@ def shell_tokens(command):
                     if not option.startswith("-") or option == "-":
                         break
                     child += 1
+                    if name == "sudo":
+                        if option.startswith("--") and any(
+                            mode.startswith(option.partition("=")[0])
+                            for mode in ("--login", "--shell")
+                        ):
+                            raise ValueError("sudo shell startup mode cannot be inspected")
+                        if not option.startswith("--"):
+                            for offset, flag in enumerate(option[1:], 1):
+                                if flag in "is":
+                                    raise ValueError("sudo shell startup mode cannot be inspected")
+                                if "-" + flag in operands:
+                                    if offset == len(option) - 1:
+                                        if child >= len(words) or "\ue002" in words[child] or all(c in ";&|()<>\n" for c in words[child]):
+                                            raise ValueError("unresolved sudo option operand")
+                                        child += 1
+                                    break  # Remaining characters are operand data.
+                                if flag not in "AbBEHkKlnPSvV":
+                                    raise ValueError("unsupported sudo option cannot be inspected")
+                            continue
                     if option in operands:
                         if child >= len(words) or "\ue002" in words[child] or all(c in ";&|()<>\n" for c in words[child]):
                             unresolved = True
@@ -805,7 +824,7 @@ def shell_tokens(command):
                         child += 1
                     elif option in {"--help", "--version"} or option in {
                         "timeout": {"--foreground", "--preserve-status", "-v", "--verbose"},
-                        "sudo": {"-n", "--non-interactive", "-E", "--preserve-env", "-H", "--set-home", "-S", "--stdin", "-b", "--background", "-i", "--login", "-s", "--shell"},
+                        "sudo": {"-n", "--non-interactive", "-E", "--preserve-env", "-H", "--set-home", "-S", "--stdin", "-b", "--background"},
                         "setsid": {"-f", "--fork", "-w", "--wait", "-c", "--ctty"},
                         "chrt": {"-p", "--pid", "-a", "--all-tasks", "-f", "--fifo", "-r", "--rr", "-o", "--other", "-b", "--batch", "-i", "--idle", "-d", "--deadline", "-v", "--verbose"},
                         "ionice": {"-t", "--ignore"},
@@ -830,6 +849,8 @@ def shell_tokens(command):
                     else:
                         child += 1  # literal duration, priority or CPU mask
                 if unresolved:
+                    if name == "sudo":
+                        raise ValueError("unresolved sudo options cannot be inspected")
                     if name == "xargs":
                         raise ValueError("unresolved xargs executable rewriting cannot be inspected")
                     if any("\ue002" in value or git_executable(value.replace("\ue003", "")) or possible_guarded(value.replace("\ue003", ""), depth + 1) for value in words[index:]):
@@ -873,9 +894,6 @@ def shell_tokens(command):
                     program = " ".join(value.replace("\ue003", "") for value in words[child:])
                     if possible_guarded(program, depth + 1):
                         raise ValueError("guarded watch shell program requires a separate literal Git invocation")
-                opaque_shell = name == "sudo" and any(value.replace("\ue003", "") in {"-s", "--shell", "-i", "--login"} for value in words[index:child])
-                if opaque_shell and child < len(words) and possible_guarded(words[child].replace("\ue003", ""), depth + 1):
-                    raise ValueError("opaque wrapper shell program cannot inspect guarded work")
                 if possible_guarded(shlex.join(words[child:]), depth + 1, supplied_program=supplied_program or name == "xargs"):
                     raise ValueError("guarded child execution wrapper requires a separate literal Git invocation")
                 head = False

@@ -49,7 +49,7 @@ try:
         if re.fullmatch(r'[A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*', matcher):
             return 'Bash' in matcher.split('|')
         script = "try {process.exit(new RegExp(process.argv[1]).test('Bash')?0:1)} catch {process.exit(2)}"
-        result = subprocess.run(['node', '-e', script, matcher], capture_output=True, timeout=5)
+        result = subprocess.run(['node', '-e', script, '--', matcher], capture_output=True, timeout=5)
         if result.returncode == 2:
             raise ValueError('invalid hook matcher')
         return result.returncode == 0

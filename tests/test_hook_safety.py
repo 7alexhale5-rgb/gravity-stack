@@ -2339,9 +2339,11 @@ class CommitGateTests(OwnedShellFixture):
                 prefix
                 + " printf '%s' 'git commit -am literal; git push --force origin main'"
             )
+            # Explicit sudo shell mode is a startup boundary even for printed data.
+            shell_mode = prefix == "sudo -s"
             for hook in COMMIT_HOOKS:
-                self.assertEqual(self.run_hook(hook, command), (0, 0))
-            self.assertEqual(DestructiveHookTests().decision(command), "allow")
+                self.assertEqual(self.run_hook(hook, command), (2, 0) if shell_mode else (0, 0))
+            self.assertEqual(DestructiveHookTests().decision(command), "deny" if shell_mode else "allow")
 
     def test_actual_nice_and_nohup_execute_guarded_child(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -4531,6 +4533,53 @@ class Review45LoginWrapper(unittest.TestCase):
                     result, denied = self.command(hook, command)
                     self.assertFalse(denied, result.stdout + result.stderr)
                     self.assertEqual(result.returncode, 0)
+
+
+class Review47SudoStartup(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+
+    def test_login_and_shell_modes_refuse_before_child_or_interactive_start(self):
+        forms = ('-i', '--login', '-s', '--shell', '-ni', '-in', '-nHi', '-Eis',
+                 '-sn', '-ns', '-u root -i', '-iu root', '-nsi', '--log', '--shel')
+        for flags in forms:
+            for child in ('', ' true'):
+                for hook in G43_HOOKS:
+                    with self.subTest(flags=flags, child=bool(child), hook=hook):
+                        self.assertTrue(self.command(hook, 'sudo ' + flags + child)[1])
+        for command in ('command sudo -i true', 'env sudo --login true',
+                        'git status; sudo -i true', 'sudo -n --shell true'):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertTrue(self.command(hook, command)[1])
+
+    def test_nonlogin_controls_keep_option_operands_and_child_data(self):
+        for command in ('sudo true', 'sudo -n true', 'sudo -H true',
+                        'sudo -u root true', 'sudo -ui true', 'sudo -p%s true',
+                        'sudo --prompt=-i true', 'sudo -- true -i', 'sudo echo -i',
+                        'sudo -nEuisi true', "printf '%s' 'sudo -i true'",
+                        'command sudo -n true'):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+
+class Review47SudoOptionBoundary(unittest.TestCase):
+    guard=Review43Guards.guard
+    command=Review43Guards.command
+    def test_unresolved_options_do_not_hide_later_shell_modes(self):
+        for command in ('sudo --preserve-env=PATH -i true', 'sudo -A -i true',
+                        'sudo --unknown-option -i true', 'sudo --preserve-env=PATH -s'):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command,hook=hook):
+                    self.assertTrue(self.command(hook,command)[1])
+        for command in ('sudo -A true', 'sudo -nAH true'):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command,hook=hook):
+                    result,denied=self.command(hook,command)
+                    self.assertFalse(denied,result.stdout+result.stderr)
+                    self.assertEqual(result.returncode,0)
 
 
 if __name__ == "__main__":

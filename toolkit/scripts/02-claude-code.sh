@@ -26,9 +26,24 @@ done
 # Copy template settings if no settings exist
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ ! -f "$CONFIG_ROOT/settings.json" ]; then
+  # Install without overwriting a customized gate before registering its path.
+  python3 - "$SCRIPT_DIR/configs/commit-gate.py" "$CONFIG_ROOT/hooks/commit-gate.py" <<'PYGATE'
+import sys
+from pathlib import Path
+source, target = (Path(value) for value in sys.argv[1:])
+expected = source.read_bytes()
+try:
+    with target.open("xb") as output:
+        output.write(expected)
+except FileExistsError:
+    pass
+if target.read_bytes() != expected:
+    print("  FAIL customized commit gate differs; settings were not created", file=sys.stderr)
+    sys.exit(1)
+PYGATE
   # Refuse unsupported environments before creating a new hook registration.
   if ! printf '%s\n' '{"tool_name":"Bash","tool_input":{"command":"true"}}' |
-    python3 "$SCRIPT_DIR/configs/commit-gate.py"; then
+    python3 "$CONFIG_ROOT/hooks/commit-gate.py"; then
     echo "  FAIL commit gate probe; settings were not created" >&2
     exit 1
   fi

@@ -811,5 +811,81 @@ class Review44RegistrationProbe(unittest.TestCase):
         self.case(True, existing=True)
 
 
+class Review46EarlyGateInstallation(unittest.TestCase):
+    def case(self, custom=False):
+        with tempfile.TemporaryDirectory(prefix='gravity46-setup-') as directory:
+            root = Path(directory); binary = root / 'bin'; binary.mkdir(); profile = root / 'profile'; profile.mkdir()
+            stub = binary / 'claude'; stub.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then echo fixture-version; exit 0; fi\nexit 1\n'); stub.chmod(0o755)
+            gate = profile / 'hooks/commit-gate.py'
+            if custom:
+                gate.parent.mkdir(); gate.write_bytes(b'# customized gate preserved\n')
+            env = {'PATH': str(binary) + os.pathsep + str(Path(sys.executable).parent) + os.pathsep + '/usr/bin:/bin',
+                   'CLAUDE_CONFIG_DIR': str(profile), 'PYTHONDONTWRITEBYTECODE': '1'}
+            phase2 = subprocess.run(['/bin/bash', str(SOURCE / 'toolkit/scripts/02-claude-code.sh')], cwd=root,
+                                    env=env, capture_output=True, text=True, timeout=30)
+            if custom:
+                self.assertNotEqual(phase2.returncode, 0)
+                self.assertEqual(gate.read_bytes(), b'# customized gate preserved\n')
+                self.assertFalse((profile / 'settings.json').exists())
+                return
+            self.assertEqual(phase2.returncode, 0, phase2.stderr)
+            phase3 = subprocess.run(['/bin/bash', str(SOURCE / 'toolkit/scripts/03-mcp-servers.sh')], cwd=root,
+                                    env=env, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(phase3.returncode, 0)
+            self.assertTrue((profile / 'settings.json').exists())
+            self.assertTrue(gate.is_file(), 'phase3 failure must not leave a missing registered gate')
+            self.assertEqual(gate.read_bytes(), (SOURCE / 'toolkit/configs/commit-gate.py').read_bytes())
+            payload = json.dumps({'tool_name': 'Bash', 'tool_input': {'command': 'true'}})
+            probe = subprocess.run([sys.executable, str(gate)], input=payload, capture_output=True, text=True,
+                                   env=env, timeout=10)
+            self.assertEqual(probe.returncode, 0, probe.stderr)
+
+    def test_phase3_failure_leaves_present_working_registered_gate(self):
+        self.case()
+
+    def test_custom_gate_is_preserved_without_new_registration(self):
+        self.case(custom=True)
+
+
+class Review47MatcherArguments(unittest.TestCase):
+    setUp = PhaseSix.setUp
+    script = PhaseSix.script
+    real_verifier = PhaseSix.real_verifier
+    run_installer = PhaseSix.run_installer
+
+    def test_option_looking_matchers_never_credit_or_preload(self):
+        self.real_verifier()
+        marker = self.root / 'node-preload-ran'
+        module = self.root / 'owned-matcher.cjs'
+        module.write_text("require('fs').writeFileSync(" + json.dumps(str(marker)) + ", 'loaded');\n")
+        store = self.home / '.claude/settings.json'
+        value = json.loads(store.read_text())
+        for matcher in ('--no-warnings', '--trace-warnings', '--require=' + str(module)):
+            value['hooks']['PreToolUse'][0]['matcher'] = matcher
+            original = json.dumps(value)
+            store.write_text(original)
+            result = self.run_installer('--skip-dev-protocol')
+            for label, actual, expected in (('exit', result.returncode, 1),
+                                            ('canary', marker.exists(), False),
+                                            ('settings-preserved', store.read_text() == original, True)):
+                with self.subTest(matcher=matcher, check=label):
+                    self.assertEqual(actual, expected)
+
+    def test_regex_and_exact_matcher_controls(self):
+        self.real_verifier()
+        store = self.home / '.claude/settings.json'
+        value = json.loads(store.read_text())
+        for matcher, expected in (('Bash', 0), ('Bash|Read', 0), ('^Bash$', 0),
+                                  ('^Read$', 1), ('--no-warnings|Bash', 0), ('[', 1)):
+            with self.subTest(matcher=matcher):
+                value['hooks']['PreToolUse'][0]['matcher'] = matcher
+                original = json.dumps(value)
+                store.write_text(original)
+                result = self.run_installer('--skip-dev-protocol')
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                self.assertEqual(store.read_text(), original)
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
