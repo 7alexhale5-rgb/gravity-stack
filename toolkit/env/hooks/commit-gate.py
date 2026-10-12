@@ -1703,46 +1703,58 @@ def typescript_directory(directory, worktree_boundary):
     return None
 
 
-try:
-    payload = json.load(sys.stdin)
-    tool = payload.get("tool_input", {})
-    base = Path(payload.get("cwd") or tool.get("cwd") or os.getcwd()).resolve()
-    command = tool.get("command", "")
-except (ValueError, TypeError, OSError, AttributeError):
-    sys.exit(0)
 
-try:
-    directories = commit_directories(command, base)
-except (ValueError, OSError) as error:
-    print(f"COMMIT BLOCKED: directory check unavailable ({error})", file=sys.stderr)
-    sys.exit(2)
-
-for target, explicit_worktree in directories:
-    directory = typescript_directory(target, explicit_worktree)
-    if directory is None:
-        continue
+def main():
     try:
-        check = subprocess.run(
-            ["npx", "tsc", "--noEmit"],
-            cwd=str(directory),
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=60,
-        )
-        if check.returncode != 0:
-            detail = (check.stderr or check.stdout).strip()[:1000]
+        payload = json.load(sys.stdin)
+        tool = payload.get("tool_input", {})
+        base = Path(payload.get("cwd") or tool.get("cwd") or os.getcwd()).resolve()
+        command = tool.get("command", "")
+        if not isinstance(command, str):
+            raise TypeError("command must be text")
+    except (ValueError, TypeError, OSError, AttributeError):
+        print("COMMIT BLOCKED: invalid hook payload", file=sys.stderr)
+        sys.exit(2)
+
+    try:
+        directories = commit_directories(command, base)
+    except (ValueError, OSError) as error:
+        print(f"COMMIT BLOCKED: directory check unavailable ({error})", file=sys.stderr)
+        sys.exit(2)
+
+    for target, explicit_worktree in directories:
+        directory = typescript_directory(target, explicit_worktree)
+        if directory is None:
+            continue
+        try:
+            check = subprocess.run(
+                ["npx", "tsc", "--noEmit"],
+                cwd=str(directory),
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=60,
+            )
+            if check.returncode != 0:
+                detail = (check.stderr or check.stdout).strip()[:1000]
+                print(
+                    "COMMIT BLOCKED: TypeScript check failed"
+                    + (":\n" + detail if detail else ""),
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+        except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError) as error:
             print(
-                "COMMIT BLOCKED: TypeScript check failed"
-                + (":\n" + detail if detail else ""),
+                f"COMMIT BLOCKED: TypeScript check unavailable ({type(error).__name__})",
                 file=sys.stderr,
             )
             sys.exit(2)
-    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError) as error:
-        print(
-            f"COMMIT BLOCKED: TypeScript check unavailable ({type(error).__name__})",
-            file=sys.stderr,
-        )
-        sys.exit(2)
 
-sys.exit(0)
+    sys.exit(0)
+
+
+try:
+    main()
+except Exception as error:
+    print(f"COMMIT BLOCKED: inspection unavailable ({type(error).__name__})", file=sys.stderr)
+    sys.exit(2)

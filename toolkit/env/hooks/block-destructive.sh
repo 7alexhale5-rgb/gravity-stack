@@ -1,5 +1,10 @@
 #!/bin/bash
 # Claude PreToolUse Bash hook. Inspect literal commands; do not execute them.
+inspection_failed() {
+  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"BLOCKED: hook inspection unavailable"}}'
+  exit 0
+}
+trap inspection_failed ERR
 python3 -c '
 import json
 import os
@@ -11,7 +16,7 @@ import sys
 try:
     command = json.load(sys.stdin).get("tool_input", {}).get("command", "")
 except (ValueError, TypeError):
-    sys.exit(0)
+    sys.exit(1)
 
 def deny(reason):
     print(json.dumps({"hookSpecificOutput": {

@@ -26,8 +26,8 @@ echo -e "${BOLD}╚════════════════════�
 echo ""
 
 commit_gate_registered() {
-  python3 - <<'PYTHON'
-import json, os, re, shlex, shutil, subprocess, sys
+  python3 - "${BASH_SOURCE[0]%/*}/../configs/commit-gate.py" <<'PYTHON'
+import hashlib, json, os, re, shlex, shutil, subprocess, sys
 from pathlib import Path
 try:
     selected = Path(os.environ.get('CLAUDE_CONFIG_DIR') or str(Path.home() / '.claude'))
@@ -130,6 +130,9 @@ try:
             position += 1
         return (position == len(args) - 1 and Path(args[position]).is_absolute()
                 and Path(args[position]).resolve() == gate.resolve())
+    bundled = Path(sys.argv[1])
+    if hashlib.sha256(gate.read_bytes()).digest() != hashlib.sha256(bundled.read_bytes()).digest():
+        raise SystemExit(1)
     registered = False
     for group in settings.get('hooks', {}).get('PreToolUse', []):
         if not matches_bash(group.get('matcher', '')):

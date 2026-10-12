@@ -401,7 +401,18 @@ chmod +x "$dest/install.sh"
                 }
             )
         )
-        (self.home / ".claude/hooks/commit-gate.py").write_text("# fixture hook")
+        (self.toolkit / "configs").mkdir(exist_ok=True)
+        shutil.copy2(SOURCE / "toolkit/configs/commit-gate.py", self.toolkit / "configs/commit-gate.py")
+        shutil.copy2(SOURCE / "toolkit/configs/commit-gate.py", self.home / ".claude/hooks/commit-gate.py")
+
+    def test_review41_different_gate_fails_and_preserves(self):
+        self.real_verifier()
+        gate = self.home / ".claude/hooks/commit-gate.py"
+        gate.write_text("# customized old gate\n")
+        original = gate.read_bytes()
+        result = self.run_installer("--skip-dev-protocol")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(gate.read_bytes(), original)
 
     def test_real_verifier_reaches_optional_install(self):
         self.real_verifier()
@@ -427,7 +438,7 @@ chmod +x "$dest/install.sh"
             shutil.copy2(
                 SOURCE / "toolkit/scripts" / script, self.toolkit / "scripts" / script
             )
-        shutil.copytree(SOURCE / "toolkit/configs", self.toolkit / "configs")
+        shutil.copytree(SOURCE / "toolkit/configs", self.toolkit / "configs", dirs_exist_ok=True)
         profile = self.root / "selected profile's config"
         self.env["CLAUDE_CONFIG_DIR"] = str(profile)
         default = self.home / ".claude/settings.json"

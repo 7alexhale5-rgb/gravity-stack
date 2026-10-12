@@ -4322,5 +4322,33 @@ class CarlLegacyPolicyTests(unittest.TestCase):
         self.assertFalse(domains["OPUS-4-7"]["state"])
 
 
+class Review41MalformedTests(unittest.TestCase):
+    def test_malformed_payloads_fail_closed(self):
+        for value in ([], None, {"tool_input": []},
+                      {"tool_input": {"command": None}},
+                      {"tool_input": {"command": 42}}):
+            for name in ("toolkit/configs/commit-gate.py",
+                         "toolkit/env/hooks/commit-gate.py",
+                         "toolkit/env/hooks/block-destructive.sh"):
+                with self.subTest(value=value, hook=name):
+                    command = ([sys.executable, str(ROOT / name)]
+                               if name.endswith(".py") else ["/bin/bash", str(ROOT / name)])
+                    result = subprocess.run(command, input=json.dumps(value), text=True,
+                                            capture_output=True, timeout=5)
+                    if name.endswith(".py"):
+                        self.assertEqual(result.returncode, 2)
+                    else:
+                        self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]
+                                         ["permissionDecision"], "deny")
+
+    def test_missing_destructive_runtime_fails_closed(self):
+        result = subprocess.run(
+            ["/bin/bash", str(ROOT / "toolkit/env/hooks/block-destructive.sh")],
+            input=json.dumps({"tool_input": {"command": "true"}}), text=True,
+            capture_output=True, env=dict(os.environ, PATH="/nonexistent"), timeout=5)
+        self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]
+                         ["permissionDecision"], "deny")
+
+
 if __name__ == "__main__":
     unittest.main()

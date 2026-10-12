@@ -100,3 +100,18 @@ The bundled commit guard refuses multiple distinct commit destinations in one sh
 command before compiling; split those commits into separate commands. Repeated
 commits to one destination compile once within the 60-second compiler limit and
 70-second hook deadline. Pruning pushes are conservatively refused.
+
+Inspection fails closed when command payloads, runtimes, or shell state cannot be
+proved. This applies before determining whether a destination uses TypeScript.
+Inherited shell startup selectors or executable tracing inputs can run code before
+an otherwise harmless command, so those inputs are conservatively refused even
+for `true`. Avoid inherited startup selectors in the controlled hook environment;
+this restriction is not a claim that every selector value is harmful.
+
+Run state-changing preparation, such as staging or tests, separately from commits
+and pushes. Use a separate literal `git commit -F` with an already prepared message
+file rather than a command substitution. Ordinary pushes means separate supported
+literal pushes; preceding state-changing commands remain unproved. Unknown shell
+state is not allowed merely because the initial directory has no TypeScript file.
+The installer preserves customized gates. Verification requires the registered
+installed gate to match the bundled bytes; a preserved older gate needs review.
