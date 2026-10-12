@@ -235,7 +235,7 @@ free fallback. Canonical list, detection rules and fallbacks: research-stack `re
 
 Here is a complete project `.mcp.json` block for the seven local core registrations.
 Cloud integrations use the host settings and are omitted from this JSON.
-Replace the memory file placeholder with an absolute path before use.
+Replace the memory file placeholder with an absolute path before use. Existing memory registrations also require an explicit absolute `MEMORY_FILE_PATH` in their environment. Missing or invalid paths fail readback while preserving the stored entry.
 
 ```json
 {

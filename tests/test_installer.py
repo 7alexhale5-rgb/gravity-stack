@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -179,7 +180,11 @@ from pathlib import Path
 root=Path(os.environ['HOME']);store=root/'.claude.json'
 if sys.argv[1:3] != ['mcp','add']: sys.exit(3)
 name=sys.argv[sys.argv.index('--scope')+2]
-d=json.loads(store.read_text());d['mcpServers'][name]={'command':'fixture'}
+entry={'command':'fixture'}
+if '--env' in sys.argv:
+    key,value=sys.argv[sys.argv.index('--env')+1].split('=',1)
+    entry['env']={key:value}
+d=json.loads(store.read_text());d['mcpServers'][name]=entry
 store.write_text(json.dumps(d))
 with (root/'calls').open('a') as f:f.write(name+'\\n')
 """)
@@ -732,6 +737,43 @@ chmod +x "$dest/install.sh"
             (self.home / "installed-args").read_text(), "--target both --yes\n"
         )
         self.assertEqual((self.home / "calls").read_text(), "clone\n")
+
+
+class Review43MemoryReadback(unittest.TestCase):
+    def case(self, env_value, expected_pass, include_env=True):
+        with tempfile.TemporaryDirectory(prefix='gravity43-memory-') as directory:
+            root = Path(directory); binary = root / 'bin'; binary.mkdir()
+            stub = binary / 'claude'
+            stub.write_text('#!/bin/sh\nprintf unexpected-registration >> "$HOME/calls"\nexit 1\n')
+            stub.chmod(0o755)
+            servers = {name: {'command': 'custom-' + name, 'args': ['--preserve'], 'custom': {'keep': True}}
+                       for name in ('playwright', 'firecrawl', 'perplexity', 'memory', 'hacker-news')}
+            if include_env:
+                servers['memory']['env'] = env_value
+            servers['unrelated-private-server'] = {'url': 'https://example.invalid/custom', 'custom': ['retain']}
+            store = root / '.claude.json'; store.write_text(json.dumps({'mcpServers': servers, 'preferences': {'keep': True}}))
+            before = store.read_bytes()
+            env = {'PATH': str(binary) + os.pathsep + str(Path(sys.executable).parent) + os.pathsep + '/usr/bin:/bin',
+                   'HOME': str(root), 'PYTHONDONTWRITEBYTECODE': '1'}
+            for run in range(2):
+                result = subprocess.run(['/bin/bash', str(SOURCE / 'toolkit/scripts/03-mcp-servers.sh')], cwd=root, env=env, capture_output=True, text=True, timeout=30)
+                with self.subTest(run=run):
+                    self.assertEqual(result.returncode == 0, expected_pass, result.stdout + result.stderr)
+                    self.assertEqual(store.read_bytes(), before)
+                    self.assertFalse((root / 'calls').exists())
+
+    def test_existing_memory_requires_absolute_env_path(self):
+        for name, value, included in (('missing-env', None, False), ('missing-path', {}, True),
+                                      ('null-env', None, True), ('list-env', [], True),
+                                      ('null-path', {'MEMORY_FILE_PATH': None}, True),
+                                      ('relative', {'MEMORY_FILE_PATH': 'graph.json'}, True),
+                                      ('empty', {'MEMORY_FILE_PATH': ''}, True),
+                                      ('nontext', {'MEMORY_FILE_PATH': 17}, True)):
+            with self.subTest(case=name):
+                self.case(value, False, included)
+
+    def test_existing_absolute_memory_and_custom_servers_preserved(self):
+        self.case({'MEMORY_FILE_PATH': '/private/gravity43-custom-memory/graph.json', 'CUSTOM_SETTING': 'keep'}, True)
 
 
 if __name__ == "__main__":

@@ -4350,5 +4350,104 @@ class Review41MalformedTests(unittest.TestCase):
                          ["permissionDecision"], "deny")
 
 
+G43_HOOKS = ('toolkit/configs/commit-gate.py', 'toolkit/env/hooks/commit-gate.py', 'toolkit/env/hooks/block-destructive.sh')
+G43_PATH = str(Path(sys.executable).parent) + os.pathsep + '/usr/bin:/bin'
+
+class Review43Guards(unittest.TestCase):
+    def guard(self, hook, payload, selectors=None):
+        with tempfile.TemporaryDirectory(prefix='gravity43-inspection-') as directory:
+            root = Path(directory)
+            data = dict(payload)
+            data['cwd'] = str(root)
+            env = {'PATH': G43_PATH, 'HOME': str(root), 'XDG_CONFIG_HOME': str(root / 'xdg'), 'PYTHONDONTWRITEBYTECODE': '1'}
+            env.update(selectors or {})
+            command = [sys.executable if hook.endswith('.py') else '/bin/bash', str(ROOT / hook)]
+            result = subprocess.run(command, input=json.dumps(data), text=True, capture_output=True, cwd=root, env=env, timeout=10)
+            denied = result.returncode == 2 if hook.endswith('.py') else bool(result.stdout) and json.loads(result.stdout)['hookSpecificOutput']['permissionDecision'] == 'deny'
+            return result, denied
+
+    def command(self, hook, command, selectors=None):
+        return self.guard(hook, {'tool_name': 'Bash', 'tool_input': {'command': command}}, selectors)
+
+    def test_literal_git_does_not_skip_trailing_deferred_inputs(self):
+        tails = ("PS4='$(true)'; true", "builtin export PS4='$(true)'; true",
+                 "printf -v PS4 %s '$(true)'; true", 'set -x; true', 'set -o xtrace; true')
+        for leading in ('git commit --dry-run', 'git --no-pager commit --dry-run'):
+            for boundary in ('; ', '\n', ' && '):
+                for tail in tails:
+                    for hook in G43_HOOKS:
+                        with self.subTest(leading=leading, boundary=repr(boundary), tail=tail, hook=hook):
+                            self.assertTrue(self.command(hook, leading + boundary + tail)[1])
+
+    def test_alias_and_expansion_state_cannot_hide_execution(self):
+        programs = ("shopt -s expand_aliases\nalias hello=true\nhello",
+                    "shopt -sq expand_aliases\nalias hello='true'\nhello",
+                    "builtin shopt -s expand_aliases\nbuiltin alias hello=true\nhello",
+                    'alias hello=true\nhello', 'git commit --dry-run; alias hello=true\nhello',
+                    'git commit --dry-run; shopt -s expand_aliases\nalias hello=true\nhello',
+                    "bash -c 'shopt -s expand_aliases; alias hello=true; hello'", 'shopt -s expand_aliases')
+        for command in programs:
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertTrue(self.command(hook, command)[1])
+
+    def test_missing_bash_command_fields_fail_closed(self):
+        for payload in ({'tool_name': 'Bash'}, {'tool_name': 'Bash', 'tool_input': {}},
+                        {'tool_name': 'Bash', 'tool_input': None}, {}, {'tool_input': {}}):
+            for hook in G43_HOOKS:
+                with self.subTest(payload=payload, hook=hook):
+                    self.assertTrue(self.guard(hook, payload)[1])
+
+    def test_selector_diagnostics_name_keys_without_values(self):
+        for variable in ('PS4', 'BASH_ENV', 'ENV', 'ZDOTDIR', 'SHELLOPTS', 'BASHOPTS'):
+            value = 'gravity43-private-value-' + variable
+            if variable == 'PS4':
+                value += '$(true)'
+            for hook in G43_HOOKS:
+                with self.subTest(variable=variable, hook=hook):
+                    result, denied = self.command(hook, variable + '=' + shlex.quote(value) + '; true')
+                    self.assertTrue(denied)
+                    output = result.stdout + result.stderr
+                    self.assertIn(variable, output)
+                    self.assertNotIn(value, output)
+        for hook in G43_HOOKS:
+            with self.subTest(variable='inherited-ZDOTDIR', hook=hook):
+                value = '/private/gravity43-private-selector-value'
+                result, denied = self.command(hook, 'true', {'ZDOTDIR': value})
+                self.assertTrue(denied)
+                self.assertIn('ZDOTDIR', result.stdout + result.stderr)
+                self.assertNotIn(value, result.stdout + result.stderr)
+
+    def test_inert_alias_data_queries_and_ordinary_git_remain_allowed(self):
+        commands = ("printf '%s' 'shopt -s expand_aliases; alias hello=true'",
+                    'alias', 'alias -p', 'alias hello', 'unalias hello', 'shopt -q expand_aliases',
+                    'shopt -p expand_aliases', 'shopt -u expand_aliases', 'shopt -s nullglob',
+                    "PS4='+ '; true", 'git commit --dry-run',
+                    "git commit --dry-run; printf '%s' 'PS4=$(true)'",
+                    "git commit --dry-run; printf '%s' 'alias hello=true'")
+        for command in commands:
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+        for payload in ({'tool_name': 'Bash', 'tool_input': {'command': ''}},
+                        {'tool_name': 'Read', 'tool_input': {'file_path': 'example.txt'}},
+                        {'tool_input': {'command': 'true'}}):
+            for hook in G43_HOOKS:
+                with self.subTest(payload=payload, hook=hook):
+                    self.assertFalse(self.guard(hook, payload)[1])
+
+    def test_three_parser_copies_remain_identical(self):
+        sources = [(ROOT / hook).read_text() for hook in G43_HOOKS]
+        sources[-1] = sources[-1].split("python3 -c '\n", 1)[1].rsplit("'", 1)[0]
+        trees = []
+        for source in sources:
+            trees.append([ast.dump(n, include_attributes=False) for n in ast.parse(source).body
+                          if isinstance(n, ast.FunctionDef) and n.name in ('shell_continuations', 'git_executable', 'shell_tokens')])
+        self.assertEqual(trees[0], trees[1])
+        self.assertEqual(trees[0], trees[2])
+
+
 if __name__ == "__main__":
     unittest.main()

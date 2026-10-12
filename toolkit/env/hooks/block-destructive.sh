@@ -14,8 +14,21 @@ import shlex
 import sys
 
 try:
-    command = json.load(sys.stdin).get("tool_input", {}).get("command", "")
-except (ValueError, TypeError):
+    payload = json.load(sys.stdin)
+    if not isinstance(payload, dict):
+        raise TypeError("payload must be an object")
+    tool_name = payload.get("tool_name", "Bash")
+    if not isinstance(tool_name, str):
+        raise TypeError("tool name must be text")
+    if tool_name != "Bash":
+        sys.exit(0)
+    tool = payload["tool_input"]
+    if not isinstance(tool, dict):
+        raise TypeError("tool input must be an object")
+    command = tool["command"]
+    if not isinstance(command, str):
+        raise TypeError("command must be text")
+except (ValueError, TypeError, AttributeError, KeyError):
     sys.exit(1)
 
 def deny(reason):
@@ -92,7 +105,7 @@ def shell_tokens(command):
         else:
             uncertain = unresolved or bool(value) or variable == "ZDOTDIR"
         if uncertain:
-            raise ValueError("unresolved deferred shell execution input cannot be inspected")
+            raise ValueError(f"unresolved deferred shell execution input cannot be inspected ({variable})")
 
     for variable in deferred_names:
         if variable in os.environ:
@@ -281,6 +294,7 @@ def shell_tokens(command):
         wrapper = ""
         wrapper_operand = False
         integer_names = set()
+        found_guarded = False
         index = 0
         while index < len(words):
             raw = words[index]
@@ -533,6 +547,24 @@ def shell_tokens(command):
                     pass
                 else:
                     return True
+                continue
+            if name in {"alias", "shopt"}:
+                end = index
+                while end < len(words) and not (
+                    words[end] and all(c in ";&|()<>\n" for c in words[end])
+                ):
+                    end += 1
+                operands = [value.replace("\ue003", "") for value in words[index:end]]
+                if any("\ue002" in value for value in operands):
+                    raise ValueError("unresolved shell alias state cannot be inspected")
+                if name == "alias" and any("=" in value for value in operands):
+                    raise ValueError("shell alias definitions cannot be inspected")
+                if name == "shopt" and "expand_aliases" in operands and any(
+                    value.startswith("-") and "s" in value[1:] for value in operands
+                ):
+                    raise ValueError("shell alias expansion state cannot be inspected")
+                index = end
+                head = False
                 continue
             if name == "set":
                 position = index
@@ -969,10 +1001,10 @@ def shell_tokens(command):
                         break
                     else:
                         if argument.startswith("-") or argument in ("commit", "push"):
-                            return True
+                            found_guarded = True
                         break
             head = False
-        return False
+        return found_guarded
 
     shells = {
         "bash",
@@ -1358,6 +1390,7 @@ def shell_tokens(command):
             group.append((word, operator))
     return tokens
 
+
 def git_operation(args):
     pos = 0
     inline_config = False
@@ -1383,8 +1416,8 @@ def git_operation(args):
 
 try:
     tokens = shell_tokens(command)
-except ValueError:
-    deny("shell command cannot be inspected")
+except ValueError as error:
+    deny("shell command cannot be inspected: " + str(error))
 
 if (any(git_executable(word) for word, operator in tokens if not operator)
         and any(word == "push" for word, operator in tokens if not operator)):

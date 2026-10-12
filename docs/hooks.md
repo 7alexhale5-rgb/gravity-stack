@@ -101,6 +101,11 @@ command before compiling; split those commits into separate commands. Repeated
 commits to one destination compile once within the 60-second compiler limit and
 70-second hook deadline. Pruning pushes are conservatively refused.
 
+Bash payloads must contain an explicit text `tool_input.command`; missing command
+fields fail closed. Inline alias definitions and enabling Bash alias expansion are
+unproved shell state. Trailing startup or tracing changes are inspected even after
+a literal Git operation. Diagnostics name refused startup/tracing keys only.
+
 Inspection fails closed when command payloads, runtimes, or shell state cannot be
 proved. This applies before determining whether a destination uses TypeScript.
 Inherited shell startup selectors or executable tracing inputs can run code before

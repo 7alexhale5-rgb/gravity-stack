@@ -17,9 +17,10 @@ try:
     entry=servers.get(sys.argv[2])
     if entry is None: sys.exit(1)
     if not isinstance(entry,dict): sys.exit(2)
-    if sys.argv[2] == 'memory' and isinstance(entry.get('env'), dict):
+    if sys.argv[2] == 'memory':
+        if not isinstance(entry.get('env'), dict): sys.exit(2)
         memory_path = entry['env'].get('MEMORY_FILE_PATH')
-        if memory_path is not None and (not isinstance(memory_path, str) or not Path(memory_path).is_absolute()):
+        if not isinstance(memory_path, str) or not Path(memory_path).is_absolute():
             sys.exit(2)
     sys.exit(0 if any(isinstance(entry.get(k),str) and entry[k] for k in ('command','url')) else 2)
 except (OSError,ValueError,AttributeError): sys.exit(2)
