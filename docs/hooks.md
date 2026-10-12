@@ -115,3 +115,11 @@ literal pushes; preceding state-changing commands remain unproved. Unknown shell
 state is not allowed merely because the initial directory has no TypeScript file.
 The installer preserves customized gates. Verification requires the registered
 installed gate to match the bundled bytes; a preserved older gate needs review.
+
+Foundation verification also invokes the installed gate with a harmless `true`
+command in the current environment. A refusal fails setup and names inherited
+startup/tracing input keys without printing their values. This proves a usable
+script invocation; it still does not prove a live Claude session loaded the hook.
+Stored Git aliases and other commit-creating subcommands such as merge, revert,
+cherry-pick, and am are outside the literal commit guard. Check those changes
+through the development verification process before completing them.

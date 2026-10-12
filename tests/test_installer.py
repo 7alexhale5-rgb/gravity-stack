@@ -221,7 +221,10 @@ class PhaseSix(unittest.TestCase):
         fixture.real_verifier()
         result = fixture.run_installer("--skip-dev-protocol")
         with self.subTest(case="fixture-environment"):
-            self.assertTrue("CLAUDE_CONFIG_DIR" not in fixture.env, "baseline fixture inherited a custom profile")
+            self.assertTrue(
+                "CLAUDE_CONFIG_DIR" not in fixture.env,
+                "baseline fixture inherited a custom profile",
+            )
         with self.subTest(case="owned-baseline"):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         (fixture.home / ".claude/settings.json").unlink()
@@ -402,8 +405,14 @@ chmod +x "$dest/install.sh"
             )
         )
         (self.toolkit / "configs").mkdir(exist_ok=True)
-        shutil.copy2(SOURCE / "toolkit/configs/commit-gate.py", self.toolkit / "configs/commit-gate.py")
-        shutil.copy2(SOURCE / "toolkit/configs/commit-gate.py", self.home / ".claude/hooks/commit-gate.py")
+        shutil.copy2(
+            SOURCE / "toolkit/configs/commit-gate.py",
+            self.toolkit / "configs/commit-gate.py",
+        )
+        shutil.copy2(
+            SOURCE / "toolkit/configs/commit-gate.py",
+            self.home / ".claude/hooks/commit-gate.py",
+        )
 
     def test_review41_different_gate_fails_and_preserves(self):
         self.real_verifier()
@@ -414,12 +423,35 @@ chmod +x "$dest/install.sh"
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertEqual(gate.read_bytes(), original)
 
+    def test_review42_inherited_startup_refusal_visible_in_verifier(self):
+        self.real_verifier()
+        startup = self.root / "owned startup"
+        startup.mkdir()
+        (startup / ".zshenv").write_text(":\n")
+        self.env["ZDOTDIR"] = str(startup)
+        result = self.run_installer("--skip-dev-protocol")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("ZDOTDIR", result.stdout)
+
     def test_real_verifier_reaches_optional_install(self):
         self.real_verifier()
         result = self.run_installer("--yes")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("11/11 passed", result.stdout)
         self.assertTrue((self.home / "installed-args").is_file())
+
+    def test_review42_verifier_runs_from_scripts_directory(self):
+        self.real_verifier()
+        result = subprocess.run(
+            ["bash", "05-verify.sh"],
+            cwd=self.toolkit / "scripts",
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("11/11 passed", result.stdout)
 
     def test_selected_profile_cannot_borrow_default_gate(self):
         self.real_verifier()
@@ -438,7 +470,9 @@ chmod +x "$dest/install.sh"
             shutil.copy2(
                 SOURCE / "toolkit/scripts" / script, self.toolkit / "scripts" / script
             )
-        shutil.copytree(SOURCE / "toolkit/configs", self.toolkit / "configs", dirs_exist_ok=True)
+        shutil.copytree(
+            SOURCE / "toolkit/configs", self.toolkit / "configs", dirs_exist_ok=True
+        )
         profile = self.root / "selected profile's config"
         self.env["CLAUDE_CONFIG_DIR"] = str(profile)
         default = self.home / ".claude/settings.json"

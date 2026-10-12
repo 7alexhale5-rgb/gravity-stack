@@ -9,6 +9,7 @@ NC='\033[0m'
 PASS=0
 FAIL=0
 CONFIG_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 check() {
   if eval "$2" &>/dev/null; then
@@ -26,7 +27,7 @@ echo -e "${BOLD}╚════════════════════�
 echo ""
 
 commit_gate_registered() {
-  python3 - "${BASH_SOURCE[0]%/*}/../configs/commit-gate.py" <<'PYTHON'
+  python3 - "$SCRIPT_DIR/configs/commit-gate.py" <<'PYTHON'
 import hashlib, json, os, re, shlex, shutil, subprocess, sys
 from pathlib import Path
 try:
@@ -144,7 +145,17 @@ try:
                     and hook.get('async', False) is False
                     and hook.get('asyncRewake', False) is False):
                 registered = True
-    raise SystemExit(0 if gate.is_file() and registered else 1)
+    if not gate.is_file() or not registered:
+        raise SystemExit(1)
+    probe = subprocess.run([sys.executable, str(gate)],
+        input=json.dumps({"tool_input": {"command": "true"}, "cwd": str(root)}),
+        capture_output=True, text=True, timeout=5)
+    if probe.returncode != 0:
+        selectors = sorted(set(os.environ) & {"PS4", "BASH_ENV", "ENV", "ZDOTDIR", "SHELLOPTS", "BASHOPTS"})
+        print("Installed commit gate rejected harmless probe; inherited inputs present: " +
+              (", ".join(selectors) or "none"))
+        raise SystemExit(1)
+    raise SystemExit(0)
 except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
     raise SystemExit(1)
 PYTHON
@@ -166,7 +177,14 @@ check "Hooks directory" 'test -d "$CONFIG_ROOT/hooks"' 'printf "%s" "$CONFIG_ROO
 check "Memory directory" 'test -d "$CONFIG_ROOT/memory"' 'printf "%s" "$CONFIG_ROOT/memory/"'
 echo ""
 
-check "Commit gate file and registration" "commit_gate_registered" "echo 'read back from settings'"
+if gate_detail="$(commit_gate_registered 2>&1)"; then
+  echo -e "  ${GREEN}✓${NC} Commit gate file and registration; harmless probe passed"
+  PASS=$((PASS + 1))
+else
+  echo -e "  ${RED}✗${NC} Commit gate file and registration"
+  [ -z "$gate_detail" ] || printf '%s\n' "$gate_detail"
+  FAIL=$((FAIL + 1))
+fi
 
 TOTAL=$((PASS + FAIL))
 echo -e "${BOLD}Results: ${GREEN}${PASS}/${TOTAL} passed${NC}"
