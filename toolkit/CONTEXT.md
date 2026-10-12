@@ -21,6 +21,7 @@ Paths relative to the repo root.
 ## Outputs
 
 - Changed scripts under `toolkit/scripts/`, `toolkit/install.sh`, or `toolkit/vault-search.sh`.
+- Hook implementations under `toolkit/configs/` and `toolkit/env/hooks/`, with matching template wiring and regression proof.
 
 ## Human check
 

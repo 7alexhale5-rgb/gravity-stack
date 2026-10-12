@@ -38,7 +38,7 @@ Flags:
   comms -> "Telephony and messaging plan" (tags [RC] [TW] [TNX] [AIR] [DP] [CR] [FCC])
 - Bundles: #launch (seo, perf, a11y, content), #ship-audit (security, perf, a11y), #competitive (market, seo, content), #build-pick (devtools, security)
 
-Paid tools are optional. If a paid tool for a focus tag is unavailable, say so in the addendum and name the free fallback used.
+Paid tools are optional. If a paid tool for a focus tag is unavailable, say so in the addendum and name the free fallback used. For unavailable paid SEO or comms tools, start that disclosure with "Paid SEO tools were unavailable." or "Paid comms tools were unavailable." If security sources could not be established, state "Security sources were unavailable; advisories could not be established." only when accurate. A generic coverage heading or web-search tag alone does not prove focus-specific evidence.
 
 Always:
 - Tag every claim with its source
