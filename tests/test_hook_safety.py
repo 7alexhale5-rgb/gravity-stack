@@ -4582,5 +4582,112 @@ class Review47SudoOptionBoundary(unittest.TestCase):
                     self.assertEqual(result.returncode,0)
 
 
+class Review48(unittest.TestCase):
+    guard=Review43Guards.guard
+    command=Review43Guards.command
+    prefix="a=(0); expression='a[$(git commit --dry-run; printf 0)]'; "
+
+    def test_existing_integer_attributes_apply_to_declaration_writers(self):
+        for declaration in ('declare -i number; ', 'typeset -i number; '):
+            for builtin in ('export','readonly','declare','typeset'):
+                for assignment in ('number=expression','number+=expression',
+                                   "'number[0]=expression'", "'number=(expression)'"):
+                    command=self.prefix+declaration+builtin+' '+assignment
+                    for hook in G43_HOOKS:
+                        with self.subTest(declaration=declaration,builtin=builtin,assignment=assignment,hook=hook):
+                            self.assertTrue(self.command(hook,command)[1])
+        for wrapper in ('builtin ', 'command ', 'command builtin '):
+            for hook in G43_HOOKS:
+                with self.subTest(wrapper=wrapper,hook=hook):
+                    self.assertTrue(self.command(hook,self.prefix+'declare -i number; '+wrapper+'export number=expression')[1])
+
+    def test_trap_writers_cannot_depend_on_current_or_future_integer_state(self):
+        callbacks=('number=expression', 'number+=expression', 'number[0]=expression',
+                   'export number=expression', 'readonly number=expression',
+                   'declare number=expression', 'typeset number=expression',
+                   'printf -v number %s expression', 'read number <<< expression')
+        for callback in callbacks:
+            for declaration_first in (True,False):
+                statement='trap '+shlex.quote(callback)+' EXIT; '
+                program=('declare -i number; '+statement if declaration_first else statement+'declare -i number; ')
+                for hook in G43_HOOKS:
+                    with self.subTest(callback=callback,declaration_first=declaration_first,hook=hook):
+                        self.assertTrue(self.command(hook,self.prefix+program)[1])
+        for callback in ('number=1', 'printf -v number %s 1', 'declare label=text',
+                         'mapfile number', 'readarray number'):
+            for hook in G43_HOOKS:
+                with self.subTest(deferred_unknown_state=callback,hook=hook):
+                    self.assertTrue(self.command(hook,'trap '+shlex.quote(callback)+' EXIT')[1])
+
+    def test_actual_builtin_and_trap_arithmetic_uses_only_owned_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix='gravity48-owned-') as directory:
+            root=Path(directory);binary=root/'bin';binary.mkdir();log=root/'calls'
+            fake=binary/'git';fake.write_text('#!/bin/sh\nprintf "%s\n" "$*" >> "$OWNED_GIT_LOG"\n');fake.chmod(0o755)
+            environment={'PATH':str(binary)+os.pathsep+'/usr/bin:/bin','HOME':str(root),'OWNED_GIT_LOG':str(log)}
+            tails=["declare -i number; "+builtin+' number=expression' for builtin in ('export','readonly','declare','typeset')]
+            tails += ["declare -i number; export 'number=(expression)'", "declare -i number; trap 'number=expression' EXIT",
+                      "trap 'number=expression' EXIT; declare -i number", "trap 'export number=expression' EXIT; declare -i number"]
+            for tail in tails:
+                with self.subTest(tail=tail):
+                    log.write_text('')
+                    result=subprocess.run(['/bin/bash','-c',self.prefix+tail],cwd=root,env=environment,capture_output=True,text=True,timeout=3)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertIn('commit --dry-run',log.read_text())
+                    for hook in G43_HOOKS:
+                        with self.subTest(hook=hook):
+                            self.assertTrue(self.command(hook,self.prefix+tail)[1])
+
+    def test_literal_integer_values_and_print_only_callbacks_remain_allowed(self):
+        controls=["declare -i number; "+builtin+' number=3' for builtin in ('export','readonly','declare','typeset')]
+        controls += ['declare -i number; export number+=3', "declare -i number; export 'number[0]=3'",
+                     "declare -i number; export 'number=(1 2)'", 'declare -i number; export number',
+                     'export label=expression', 'declare label=expression', 'readonly label=expression',
+                     'declare -a values=(one two)', "trap 'printf %s hello' EXIT; declare -i number",
+                     "trap 'echo number=expression' EXIT; declare -i number", "trap 'true' EXIT", 'trap -p', 'trap - EXIT']
+        for command in controls:
+            for hook in G43_HOOKS:
+                with self.subTest(command=command,hook=hook):
+                    result,denied=self.command(hook,command)
+                    self.assertFalse(denied,result.stdout+result.stderr)
+                    self.assertEqual(result.returncode,0)
+
+
+
+class Review48NestedCallbacks(unittest.TestCase):
+    guard=Review43Guards.guard
+    command=Review43Guards.command
+    prefix=Review48.prefix
+    def test_callback_substitution_and_parameter_writes_keep_deferred_state(self):
+        for callback in ('printf %s "$(number=expression)"', 'echo `export number=expression`',
+                         'cat <(number=expression)', ': ${number:=expression}',
+                         'echo "$(printf -v number %s expression)"'):
+            for first in (True,False):
+                trap='trap '+shlex.quote(callback)+' EXIT; '
+                command=self.prefix+('declare -i number; '+trap if first else trap+'declare -i number; ')
+                for hook in G43_HOOKS:
+                    with self.subTest(callback=callback,declaration_first=first,hook=hook):
+                        self.assertTrue(self.command(hook,command)[1])
+        for callback in ('printf %s "$(printf %s hello)"', 'echo "$(pwd)"', 'echo "$number"'):
+            for hook in G43_HOOKS:
+                with self.subTest(read_only_callback=callback,hook=hook):
+                    result,denied=self.command(hook,'trap '+shlex.quote(callback)+' EXIT; declare -i number')[0:2]
+                    self.assertFalse(denied,result.stdout+result.stderr)
+                    self.assertEqual(result.returncode,0)
+    def test_actual_nested_callback_runs_only_owned_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix='gravity48-nested-owned-') as directory:
+            root=Path(directory);binary=root/'bin';binary.mkdir();log=root/'calls';fake=binary/'git'
+            fake.write_text('#!/bin/sh\nprintf "%s\n" "$*" >> "$OWNED_GIT_LOG"\n');fake.chmod(0o755)
+            env={'PATH':str(binary)+os.pathsep+'/usr/bin:/bin','HOME':str(root),'OWNED_GIT_LOG':str(log)}
+            for callback in ('printf %s "$(number=expression)"', ': ${number:=expression}'):
+                with self.subTest(callback=callback):
+                    log.write_text('');command=self.prefix+'trap '+shlex.quote(callback)+' EXIT; declare -i number'
+                    result=subprocess.run(['/bin/bash','-c',command],cwd=root,env=env,capture_output=True,text=True,timeout=3)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertIn('commit --dry-run',log.read_text())
+                    for hook in G43_HOOKS:
+                        with self.subTest(hook=hook):
+                            self.assertTrue(self.command(hook,command)[1])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -127,7 +127,7 @@ def shell_tokens(command):
         value = expression[assignment.end() :] if assignment else expression
         return bool(value.strip()) and bool(re.fullmatch(r"[0-9 \t+*/%()<>|&^!~=.-]+", value))
 
-    def inspect_substitutions(text, depth=0, quote_sensitive=True):
+    def inspect_substitutions(text, depth=0, quote_sensitive=True, deferred_state=False):
         """Recursively inspect executable substitutions, retaining word expansion."""
         if depth > 16:
             raise ValueError("shell nesting exceeds inspection limit")
@@ -156,6 +156,8 @@ def shell_tokens(command):
                     r"^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?:?=", reference
                 )
                 if assignment:
+                    if deferred_state:
+                        raise ValueError("deferred callback parameter assignment cannot be inspected")
                     check_deferred_input(assignment.group(1), unresolved=True)
                 indexed = re.match(r"^[A-Za-z_][A-Za-z0-9_]*\[(.*)\]", reference)
                 if (
@@ -208,7 +210,7 @@ def shell_tokens(command):
                 if ending >= len(text):
                     raise ValueError("unterminated arithmetic expansion")
                 _, guarded = inspect_substitutions(
-                    text[beginning : ending - 1], depth + 1, quote_sensitive=False
+                    text[beginning : ending - 1], depth + 1, quote_sensitive=False, deferred_state=deferred_state
                 )
                 if guarded:
                     raise ValueError(
@@ -250,7 +252,7 @@ def shell_tokens(command):
                     ending += 1
                 if ending >= len(text):
                     raise ValueError("unterminated executable shell substitution")
-                if possible_guarded(text[beginning:ending], depth + 1):
+                if possible_guarded(text[beginning:ending], depth + 1, deferred_state=deferred_state):
                     return text, True
                 # Output is unknown, even when the generating command is safe.
                 rewritten.append("\ue002SUBSTITUTION")
@@ -279,9 +281,9 @@ def shell_tokens(command):
             position += 1
         return "".join(rewritten), False
 
-    def possible_guarded(text, depth=0, supplied_program=False):
+    def possible_guarded(text, depth=0, supplied_program=False, deferred_state=False):
         """Classify executable positions, not diagnostic names or printed data."""
-        prepared, hidden = inspect_substitutions(shell_continuations(text), depth)
+        prepared, hidden = inspect_substitutions(shell_continuations(text), depth, deferred_state=deferred_state)
         if hidden:
             raise ValueError("guarded command substitution cannot be inspected")
         lexer = shlex.shlex(prepared, posix=True, punctuation_chars=";&|()<>\n")
@@ -327,6 +329,10 @@ def shell_tokens(command):
                     raise ValueError("login-style executable name cannot be inspected")
                 wrapper_operand = False
                 continue
+            # A trap runs later in this shell: attributes can change after
+            # registration. Do not infer a future write is inert from current state.
+            if deferred_state and re.match(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[.*\])?\+?=", word):
+                raise ValueError("deferred callback variable assignment cannot be inspected")
             indexed_assignment = re.match(
                 r"^([A-Za-z_][A-Za-z0-9_]*)\[(.*)\](?:\+?=)", word
             )
@@ -392,6 +398,8 @@ def shell_tokens(command):
             if expanded:
                 raise ValueError("expanded executable cannot be inspected")
             name = word if word == "." else Path(word).name
+            if deferred_state and name in {"declare", "typeset", "local", "export", "readonly", "unset", "read", "mapfile", "readarray", "let"}:
+                raise ValueError("deferred callback variable mutation cannot be inspected")
             if name in {"[[", "[", "test"}:
                 end = index
                 terminator = "]]" if name == "[[" else "]"
@@ -462,9 +470,16 @@ def shell_tokens(command):
                 for argument in arguments:
                     if argument.startswith("-") or argument == "--":
                         continue
+                    variable, separator, value = argument.partition("=")
+                    target = re.fullmatch(
+                        r"([A-Za-z_][A-Za-z0-9_]*)(?:\[(.*)\])?",
+                        variable.rstrip("+").replace("\ue002", ""),
+                    )
+                    if "\ue002" in variable and not target:
+                        raise ValueError("unresolved declaration variable target")
+                    variable_name = target.group(1) if target else variable.rstrip("+")
                     if name != "unset":
-                        variable, separator, value = argument.partition("=")
-                        check_deferred_input(variable.rstrip("+"), value, not separator)
+                        check_deferred_input(variable_name, value, not separator)
                     # Declaration builtins reparse whole compound assignments:
                     # outer shell quotes do not make their array indices inert.
                     if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\+?=\(", argument):
@@ -477,16 +492,16 @@ def shell_tokens(command):
                         raise ValueError(
                             "unresolved builtin arithmetic array index cannot be inspected"
                         )
-                    if integer:
-                        variable, separator, value = argument.partition("=")
-                        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", variable) or (
+                    if integer or (separator and variable_name in integer_names):
+                        if not target or (target.group(2) is not None and not literal_arithmetic(target.group(2))) or (
                             separator
                             and ("\ue002" in value or not literal_arithmetic(value))
                         ):
                             raise ValueError(
                                 "unresolved integer declaration cannot be inspected"
                             )
-                        integer_names.add(variable)
+                        if integer:
+                            integer_names.add(variable_name)
                 index = end
                 head = False
                 continue
@@ -601,12 +616,16 @@ def shell_tokens(command):
                 if name == "printf":
                     format_args = operands
                     if format_args and format_args[0].startswith("-v"):
+                        if deferred_state:
+                            raise ValueError("deferred callback printf assignment cannot be inspected")
                         format_args = format_args[2 if format_args[0] == "-v" else 1 :]
                     if format_args and format_args[0] == "--":
                         format_args = format_args[1:]
                     if format_args and "\ue002" in format_args[0]:
                         raise ValueError("unresolved printf format can write deferred shell inputs")
                     if format_args and re.search(r"%(?:[0-9]+\$)?[-+ #0\x27]*(?:[0-9]+|\*)?(?:\.(?:[0-9]*|\*))?[hljztL]*n", format_args[0].replace("%%", "")):
+                        if deferred_state:
+                            raise ValueError("deferred callback printf count write cannot be inspected")
                         # Count formats may repeat or consume width arguments.
                         # Any possible deferred destination must remain inert;
                         # literal formats without count writes keep data inert.
@@ -673,7 +692,7 @@ def shell_tokens(command):
                         indexed = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\[(.*)\]", target)
                         variable = indexed.group(1) if indexed else target
                         if indexed:
-                            _, guarded = inspect_substitutions(indexed.group(2), depth + 1, quote_sensitive=False)
+                            _, guarded = inspect_substitutions(indexed.group(2), depth + 1, quote_sensitive=False, deferred_state=deferred_state)
                             if guarded or not literal_arithmetic(indexed.group(2)):
                                 raise ValueError("unresolved input destination arithmetic cannot be inspected")
                         elif not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", target):
@@ -694,7 +713,7 @@ def shell_tokens(command):
                     operands = operands[1:]
                 if operands and operands[0] not in {"-p", "-l", "-", ""}:
                     if any("\ue002" in value for value in operands) or possible_guarded(
-                        operands[0], depth + 1, supplied_program=True
+                        operands[0], depth + 1, supplied_program=True, deferred_state=True
                     ):
                         raise ValueError(
                             "trap callback requires a separate literal invocation"
@@ -795,7 +814,7 @@ def shell_tokens(command):
                     expression = operand.replace("\ue003", "")
                     if expression == "--":
                         continue
-                    _, guarded = inspect_substitutions(expression, depth + 1, quote_sensitive=False)
+                    _, guarded = inspect_substitutions(expression, depth + 1, quote_sensitive=False, deferred_state=deferred_state)
                     if guarded or not literal_arithmetic(expression):
                         raise ValueError("unresolved arithmetic builtin cannot be inspected")
                 head = False
