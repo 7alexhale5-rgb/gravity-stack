@@ -121,6 +121,8 @@ Loop bindings count as writes: integer bindings need literal arithmetic inputs;
 bindings inside deferred bodies remain unproved. Plain string loops stay supported.
 Only brace function bodies are supported; other compound forms remain unproved.
 Loop bindings cannot write deferred shell startup or tracing selectors.
+Shell-provided integer variables also require literal arithmetic writes.
+Variable attribute changes inside repeated loops remain unproved.
 Plain literal `shell -c` bodies remain supported. This hook does not inspect
 shell-specific default startup files, including zsh's `~/.zshenv` when no
 `ZDOTDIR` is inherited. Treat those machine-owned files as a separate trust

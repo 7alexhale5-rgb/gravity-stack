@@ -298,7 +298,9 @@ def shell_tokens(command):
         redirection_operand = False
         wrapper = ""
         wrapper_operand = False
-        integer_names = set()
+        # Shell-provided integer attributes exist before this command is parsed.
+        integer_names = {"OPTIND", "RANDOM", "SECONDS", "LINENO", "HISTCMD", "UID", "EUID", "PPID"}
+        loop_depth = 0
         function_pending = False
         body_states = []
         found_guarded = False
@@ -424,6 +426,8 @@ def shell_tokens(command):
             if expanded:
                 raise ValueError("expanded executable cannot be inspected")
             name = word if word == "." else Path(word).name
+            if loop_depth and name in {"declare", "typeset", "local", "export", "readonly", "unset"}:
+                raise ValueError("repeated loop variable attribute mutation cannot be inspected")
             # Explicit local arrays establish fresh noninteger local bindings.
             # Their compound values still pass the index/substitution checks below.
             local_array = False
@@ -544,6 +548,7 @@ def shell_tokens(command):
                 head = False
                 continue
             if name in {"for", "select"}:
+                loop_depth += 1
                 if index >= len(words):
                     raise ValueError("missing loop binding cannot be inspected")
                 binding = words[index].replace("\ue003", "")
@@ -564,6 +569,11 @@ def shell_tokens(command):
                         end += 1
                 head = True
                 continue
+            if "\ue003" not in raw:
+                if name in {"while", "until"}:
+                    loop_depth += 1
+                elif name == "done":
+                    loop_depth = max(0, loop_depth - 1)
             if name in {
                 "if",
                 "then",

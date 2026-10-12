@@ -4872,5 +4872,48 @@ class Review51FunctionFormsAndLoopSelectors(unittest.TestCase):
                     self.assertEqual(result.returncode, 0)
 
 
+class Review52BuiltinIntegersAndRepeatedLoops(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+    prefix = Review48.prefix
+
+    def test_shell_initialized_integer_writes_need_literal_arithmetic(self):
+        for name in ('OPTIND', 'RANDOM', 'SECONDS', 'LINENO', 'HISTCMD'):
+            for tail in (name + '=expression', 'export ' + name + '=expression', 'readonly ' + name + '=expression'):
+                for hook in G43_HOOKS:
+                    with self.subTest(name=name, tail=tail, hook=hook):
+                        self.assertTrue(self.command(hook, self.prefix + tail)[1])
+
+    def test_attribute_changes_inside_repeated_loops_remain_unproved(self):
+        for loop in ('for number in 0 expression; do declare -i number; done',
+                     'select number in 0 expression; do typeset -i number; done',
+                     'while true; do number=expression; declare -i number; break; done',
+                     'until false; do number=expression; declare -i number; break; done'):
+            for hook in G43_HOOKS:
+                with self.subTest(loop=loop, hook=hook):
+                    self.assertTrue(self.command(hook, self.prefix + loop)[1])
+
+    def test_owned_builtin_and_second_loop_iteration_use_only_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix='gravity52-owned-') as directory:
+            root = Path(directory); binary = root / 'bin'; binary.mkdir(); log = root / 'calls'
+            fake = binary / 'git'; fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$OWNED_GIT_LOG"\n'); fake.chmod(0o755)
+            environment = {'PATH': str(binary) + os.pathsep + '/usr/bin:/bin', 'HOME': str(root), 'OWNED_GIT_LOG': str(log)}
+            for tail in ('OPTIND=expression', 'for number in 0 expression; do declare -i number; done'):
+                log.write_text(''); command = self.prefix + tail
+                result = subprocess.run(['/bin/bash', '-c', command], cwd=root, env=environment, capture_output=True, text=True, timeout=3)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('commit --dry-run', log.read_text())
+                for hook in G43_HOOKS:
+                    self.assertTrue(self.command(hook, command)[1])
+
+    def test_literal_builtin_values_and_plain_loops_stay_supported(self):
+        for command in ('OPTIND=1', 'RANDOM=42', 'SECONDS=0', 'for label in one two; do printf %s "$label"; done', 'while false; do printf %s hello; done', 'for label in one two; do :; done; declare -i number=1'):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
