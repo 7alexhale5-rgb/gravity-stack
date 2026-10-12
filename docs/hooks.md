@@ -104,13 +104,22 @@ commits to one destination compile once within the 60-second compiler limit and
 Bash payloads must contain an explicit text `tool_input.command`; missing command
 fields fail closed. Inline alias definitions and enabling Bash alias expansion are
 unproved shell state. Trailing startup or tracing changes are inspected even after
-a literal Git operation. Diagnostics name refused startup/tracing keys only.
+a literal Git operation. Unproved Git redirections and other uncertain executable
+forms fail closed. Login/interactive shell modes, unknown startup options and
+login-style executable names are refused before accepting a literal shell body.
+Diagnostics name refused startup/tracing keys only.
+Plain literal `shell -c` bodies remain supported. This hook does not inspect
+shell-specific default startup files, including zsh's `~/.zshenv` when no
+`ZDOTDIR` is inherited. Treat those machine-owned files as a separate trust
+boundary; the parser checks do not prove that default shell startup is inert.
 
 Inspection fails closed when command payloads, runtimes, or shell state cannot be
 proved. This applies before determining whether a destination uses TypeScript.
 Inherited shell startup selectors or executable tracing inputs can run code before
 an otherwise harmless command, so those inputs are conservatively refused even
-for `true`. Avoid inherited startup selectors in the controlled hook environment;
+for `true`. Fresh setup probes the bundled gate before creating settings; a refused
+probe leaves no new registration. Existing customized settings remain preserved.
+Avoid inherited startup selectors in the controlled hook environment;
 this restriction is not a claim that every selector value is harmful.
 
 Run state-changing preparation, such as staging or tests, separately from commits

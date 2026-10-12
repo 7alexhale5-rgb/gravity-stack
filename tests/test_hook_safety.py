@@ -4449,5 +4449,89 @@ class Review43Guards(unittest.TestCase):
         self.assertEqual(trees[0], trees[2])
 
 
+class Review45Guards(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+
+    def test_redirected_queries_cannot_skip_trailing_deferred_state(self):
+        for leading in ('git >/dev/null status', 'git 2>/dev/null status', 'git </dev/null status',
+                        'git -C . >/dev/null status', 'git --no-pager >/dev/null status'):
+            for boundary in ('; ', '\n', ' && '):
+                command = leading + boundary + "PS4='$(true)'; true"
+                for hook in G43_HOOKS:
+                    with self.subTest(leading=leading, boundary=repr(boundary), hook=hook):
+                        self.assertTrue(self.command(hook, command)[1])
+
+    def test_uncertain_execution_paths_never_accept_later_state(self):
+        prefixes = ('echo "$(git status; git commit --dry-run)"', 'env -u',
+                    'env -u "$UNRESOLVED" true', 'items=(one', '$UNRESOLVED',
+                    'env --unknown-option true', 'function', "eval ':'", 'source missing-file',
+                    'bash -c', 'bash -c "$UNRESOLVED"', 'bash missing-script',
+                    'git "$UNRESOLVED"', 'git >/dev/null status', 'git -C "$UNRESOLVED" status')
+        for prefix in prefixes:
+            for hook in G43_HOOKS:
+                with self.subTest(prefix=prefix, hook=hook):
+                    self.assertTrue(self.command(hook, prefix + "; PS4='$(true)'; true")[1])
+
+    def test_login_interactive_and_startup_options_refuse(self):
+        with tempfile.TemporaryDirectory(prefix='gravity45-startup-') as directory:
+            home = Path(directory); marker = home / 'startup-ran'
+            for filename in ('.bash_profile', '.bashrc', '.profile', '.zprofile', '.zshrc', 'customrc'):
+                (home / filename).write_text('printf startup > ' + shlex.quote(str(marker)) + '\n')
+            forms = ('-lc', '-cl', '-ic', '-ci', '-l -c', '-i -c', '--login -c',
+                     '-o login -c', '-o interactive -c', '-O expand_aliases -c',
+                     '--rcfile ' + shlex.quote(str(home / 'customrc')) + ' -c',
+                     '--init-file ' + shlex.quote(str(home / 'customrc')) + ' -c',
+                     '--norc -ic', '--noprofile -lc')
+            for shell in ('bash', 'sh', 'zsh', 'dash', 'ksh'):
+                for flags in forms:
+                    for hook in G43_HOOKS:
+                        with self.subTest(shell=shell, flags=flags, hook=hook):
+                            self.assertTrue(self.command(hook, shell + ' ' + flags + " ':'", {'HOME': str(home)})[1])
+                            self.assertFalse(marker.exists())
+
+    def test_wrapped_startup_and_login_argv0_refuse(self):
+        for command in ("command bash -lc ':'", "env bash -ic ':'", "exec bash --login -c ':'",
+                        "exec -a -bash bash -c ':'", "command exec -a -bash bash -c ':'",
+                        "git status; bash -lc ':'", "git commit --dry-run; bash -ic ':'"):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertTrue(self.command(hook, command)[1])
+
+    def test_ordinary_queries_and_literal_nonstartup_shells_stay_allowed(self):
+        for command in ('git status', 'git --version', 'git --no-pager status',
+                        "git -C 'literal>path' status", "git status 'literal>path'",
+                        "printf '%s' 'bash -lc :; PS4=$(true)'", "echo 'source ./profile; eval true'",
+                        "bash -c ':'", "env bash -c ':'", "command bash -c ':'",
+                        "bash -ec ':'", "bash -e -u -c ':'", "bash --noprofile --norc -c ':'",
+                        "bash -c ':' --login", "bash -c ':' -i", "exec -a diagnostic-name bash -c ':'",
+                        "sh -c ':'", "zsh -c ':'", "dash -c ':'", "ksh -c ':'"):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+
+
+class Review45LoginWrapper(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+
+    def test_exec_login_option_cannot_load_startup_files(self):
+        for command in ("exec -l bash -c ':'", "exec -c -l bash -c ':'", "exec -l -c sh -c ':'",
+                        "command exec -l bash -c ':'", "builtin exec -l bash -c ':'",
+                        "env bash -c \"exec -l bash -c ':'\""):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertTrue(self.command(hook, command)[1])
+        for command in ("exec -c bash -c ':'", "exec -a diagnostic-name bash -c ':'",
+                        "printf '%s' \"exec -l bash -c ':'\""):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

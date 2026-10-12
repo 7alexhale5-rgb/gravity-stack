@@ -246,7 +246,7 @@ def shell_tokens(command):
         """Classify executable positions, not diagnostic names or printed data."""
         prepared, hidden = inspect_substitutions(shell_continuations(text), depth)
         if hidden:
-            return True
+            raise ValueError("guarded command substitution cannot be inspected")
         lexer = shlex.shlex(prepared, posix=True, punctuation_chars=";&|()<>\n")
         lexer.whitespace = " \t"
         lexer.whitespace_split = True
@@ -269,7 +269,7 @@ def shell_tokens(command):
                 continue
             if raw and all(c in ";&|()<>\n" for c in raw):
                 if wrapper_operand:
-                    return True
+                    raise ValueError("missing wrapper option operand")
                 if any(c in "<>" for c in raw):
                     redirection_operand = True
                 else:
@@ -285,7 +285,9 @@ def shell_tokens(command):
                 continue
             if wrapper_operand:
                 if expanded:
-                    return True
+                    raise ValueError("expanded wrapper option operand")
+                if wrapper == "exec" and word.startswith("-"):
+                    raise ValueError("login-style executable name cannot be inspected")
                 wrapper_operand = False
                 continue
             indexed_assignment = re.match(
@@ -348,10 +350,10 @@ def shell_tokens(command):
                                     break
                         index += 1
                     if balance:
-                        return True
+                        raise ValueError("unterminated compound assignment cannot be inspected")
                 continue
             if expanded:
-                return True
+                raise ValueError("expanded executable cannot be inspected")
             name = word if word == "." else Path(word).name
             if name in {"[[", "[", "test"}:
                 end = index
@@ -482,6 +484,8 @@ def shell_tokens(command):
                 wrapper = name
                 continue
             if wrapper and word.startswith("-"):
+                if wrapper == "exec" and word == "-l":
+                    raise ValueError("login-style executable name cannot be inspected")
                 if wrapper == "command" and word in ("-v", "-V"):
                     head = False  # command lookup prints names; it does not run them.
                     continue
@@ -509,7 +513,7 @@ def shell_tokens(command):
                 ):
                     pass
                 else:
-                    return True
+                    raise ValueError("unsupported wrapper option cannot be inspected")
                 continue
             if name in {"alias", "shopt"}:
                 end = index
@@ -878,14 +882,14 @@ def shell_tokens(command):
                 continue
             if name == "function":
                 if index >= len(words) or "\ue002" in words[index] or all(c in ";&|()<>\n" for c in words[index]):
-                    return True
+                    raise ValueError("unresolved function declaration cannot be inspected")
                 # The declaration name is data; the body starts a new executable
                 # context. Function bodies containing guarded work are refused.
                 index += 1
                 head = True
                 continue
             if name in {"eval", "source", "."}:
-                return True
+                raise ValueError("dynamic shell program cannot be inspected")
             if name in {"bash", "sh", "zsh", "dash", "ksh"}:
                 # Only inspect a literal -c program; files, stdin and expanded
                 # program strings are opaque and remain conservatively guarded.
@@ -893,14 +897,19 @@ def shell_tokens(command):
                     option = words[program_index].replace("\ue003", "")
                     if option == "--xtrace" or re.fullmatch(r"-[A-Za-z]*x[A-Za-z]*", option):
                         raise ValueError("shell tracing can execute deferred prompt code")
-                    if option == "--command" or re.fullmatch(
-                        r"-[A-Za-z]*c[A-Za-z]*", option
-                    ):
+                    if option in {"--noprofile", "--norc"}:
+                        continue
+                    # Only inert noninteractive options are understood here.
+                    # Login, interactive and named startup options can load
+                    # another program before the literal command is evaluated.
+                    if option != "--command" and not re.fullmatch(r"-[ceufnCprv]+", option):
+                        raise ValueError("shell startup or unsupported option cannot be inspected")
+                    if option == "--command" or "c" in option[1:]:
                         if program_index + 1 >= len(words):
-                            return True
+                            raise ValueError("missing shell command program")
                         program = words[program_index + 1]
                         if "\ue002" in program or possible_guarded(program, depth + 1):
-                            return True
+                            raise ValueError("guarded or expanded shell program cannot be inspected")
                         head = False
                         break
                     if all(c in ";&|()<>\n" for c in option) or not option.startswith(
@@ -908,7 +917,7 @@ def shell_tokens(command):
                     ):
                         break
                 if head:
-                    return True
+                    raise ValueError("shell startup or nonliteral program cannot be inspected")
                 continue
             if git_executable(word):
                 for operand in words[index:]:
@@ -926,13 +935,13 @@ def shell_tokens(command):
                 while index < len(words):
                     argument = words[index].replace("\ue003", "")
                     if "\ue002" in argument:
-                        return True
+                        raise ValueError("expanded Git argument cannot be inspected")
                     if any(c in "<>" for c in argument) or (
                         argument.isdigit()
                         and index + 1 < len(words)
                         and any(c in "<>" for c in words[index + 1])
                     ):
-                        return True
+                        raise ValueError("Git redirection before the operation cannot be inspected")
                     if argument and all(c in ";&|()<>\n" for c in words[index]):
                         break
                     if argument == "-c" or (argument.startswith("-c") and len(argument) > 2):
@@ -947,7 +956,7 @@ def shell_tokens(command):
                         index += 1
                     elif argument in ("-C", "--git-dir", "--work-tree"):
                         if index + 1 >= len(words) or "\ue002" in words[index + 1] or (words[index + 1] and all(c in ";&|()<>\n" for c in words[index + 1])):
-                            return True
+                            raise ValueError("unresolved Git option operand cannot be inspected")
                         index += 2
                     elif argument.startswith(
                         ("-C", "-c", "--git-dir=", "--work-tree=")

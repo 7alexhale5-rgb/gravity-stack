@@ -26,6 +26,12 @@ done
 # Copy template settings if no settings exist
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ ! -f "$CONFIG_ROOT/settings.json" ]; then
+  # Refuse unsupported environments before creating a new hook registration.
+  if ! printf '%s\n' '{"tool_name":"Bash","tool_input":{"command":"true"}}' |
+    python3 "$SCRIPT_DIR/configs/commit-gate.py"; then
+    echo "  FAIL commit gate probe; settings were not created" >&2
+    exit 1
+  fi
   echo "  Copying template settings.json..."
   python3 - "$SCRIPT_DIR/configs/settings.json" "$CONFIG_ROOT" <<'PY'
 import json, shlex, sys

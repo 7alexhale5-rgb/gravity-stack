@@ -776,5 +776,40 @@ class Review43MemoryReadback(unittest.TestCase):
         self.case({'MEMORY_FILE_PATH': '/private/gravity43-custom-memory/graph.json', 'CUSTOM_SETTING': 'keep'}, True)
 
 
+class Review44RegistrationProbe(unittest.TestCase):
+    def case(self, selector, existing=False):
+        with tempfile.TemporaryDirectory(prefix='gravity44-setup-') as directory:
+            root = Path(directory); binary = root / 'bin'; binary.mkdir()
+            stub = binary / 'claude'; stub.write_text('#!/bin/sh\necho fixture-version\n'); stub.chmod(0o755)
+            profile = root / 'profile'; profile.mkdir(); settings = profile / 'settings.json'
+            original = b'{"custom": "preserve"}\n'
+            if existing:
+                settings.write_bytes(original)
+            env = {'PATH': str(binary) + os.pathsep + str(Path(sys.executable).parent) + os.pathsep + '/usr/bin:/bin',
+                   'CLAUDE_CONFIG_DIR': str(profile), 'PYTHONDONTWRITEBYTECODE': '1'}
+            if selector:
+                env['ZDOTDIR'] = '/tmp/gravity44-private-selector-value'
+            result = subprocess.run(['/bin/bash', str(SOURCE / 'toolkit/scripts/02-claude-code.sh')], cwd=root,
+                                    env=env, capture_output=True, text=True, timeout=30)
+            self.assertNotIn('gravity44-private-selector-value', result.stdout + result.stderr)
+            if existing:
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(settings.read_bytes(), original)
+            elif selector:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(settings.exists())
+                self.assertIn('ZDOTDIR', result.stderr)
+            else:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(settings.exists())
+
+    def test_refused_probe_does_not_register_new_hook(self):
+        self.case(True)
+
+    def test_supported_environment_and_existing_settings_preserved(self):
+        self.case(False)
+        self.case(True, existing=True)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
