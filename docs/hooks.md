@@ -123,6 +123,8 @@ Only brace function bodies are supported; other compound forms remain unproved.
 Loop bindings cannot write deferred shell startup or tracing selectors.
 Shell-provided integer variables also require literal arithmetic writes.
 Variable attribute changes inside repeated loops remain unproved.
+`getopts` implicit variable writes remain unproved; the guard refuses that builtin.
+Printed `getopts` text and command lookup remain supported.
 Plain literal `shell -c` bodies remain supported. This hook does not inspect
 shell-specific default startup files, including zsh's `~/.zshenv` when no
 `ZDOTDIR` is inherited. Treat those machine-owned files as a separate trust

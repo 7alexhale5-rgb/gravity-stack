@@ -675,6 +675,9 @@ def shell_tokens(command):
                             position += 1
                 head = False
                 continue
+            if name == "getopts":
+                # Implicit destination, OPTARG and OPTIND writes remain unproved.
+                raise ValueError("implicit getopts variable writes cannot be inspected")
             if name in {"printf", "read", "mapfile", "readarray"}:
                 end = index
                 while end < len(words) and not (

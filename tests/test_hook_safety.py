@@ -4915,5 +4915,33 @@ class Review52BuiltinIntegersAndRepeatedLoops(unittest.TestCase):
                     self.assertEqual(result.returncode, 0)
 
 
+class Review53Getopts(unittest.TestCase):
+    guard=Review43Guards.guard
+    command=Review43Guards.command
+    def test_getopts_cannot_mutate_deferred_execution_selectors(self):
+        for variable in ['BASH_ENV','ENV','PS4','SHELLOPTS','BASHOPTS','ZDOTDIR']:
+            for wrapper in ['', 'builtin ', 'command builtin ']:
+                program='OPTIND=1; export '+variable+'=; '+wrapper+'getopts a '+variable+" -a; bash -c ':'"
+                for hook in G43_HOOKS:
+                    with self.subTest(variable=variable,wrapper=wrapper,hook=hook):self.assertTrue(self.command(hook,program)[1])
+    def test_implicit_getopts_writes_stay_unproved_in_integer_and_deferred_contexts(self):
+        for program in ['declare -i option; getopts a option -a', 'declare -i OPTARG; getopts a: option -a expression', 'function parse { getopts a option -a; }; parse', 'getopts a names[index] -a', 'getopts a "$destination" -a']:
+            for hook in G43_HOOKS:
+                with self.subTest(program=program,hook=hook):self.assertTrue(self.command(hook,program)[1])
+    def test_owned_startup_file_runs_only_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix='gravity53-owned-') as d:
+            root=Path(d);binary=root/'bin';binary.mkdir();fake=binary/'git';log=root/'calls'
+            fake.write_text('#!/bin/sh\nprintf "%s\n" "$*" >> "$OWNED_GIT_LOG"\n');fake.chmod(0o755)
+            (root/'a').write_text('git commit --dry-run\n')
+            program="OPTIND=1; export BASH_ENV=; getopts a BASH_ENV -a; bash -c ':'"
+            result=subprocess.run(['/bin/bash','-c',program],cwd=root,env={'HOME':str(root),'PATH':str(binary)+os.pathsep+'/usr/bin:/bin','OWNED_GIT_LOG':str(log)},capture_output=True,text=True,timeout=3)
+            self.assertEqual(result.returncode,0,result.stderr);self.assertIn('commit --dry-run',log.read_text())
+            for hook in G43_HOOKS:self.assertTrue(self.command(hook,program)[1])
+    def test_quoted_getopts_data_and_command_lookup_remain_safe(self):
+        for program in ["printf '%s' 'getopts a BASH_ENV -a'; true", 'command -v getopts', 'true']:
+            for hook in G43_HOOKS:
+                with self.subTest(program=program,hook=hook):self.assertFalse(self.command(hook,program)[1])
+
+
 if __name__ == "__main__":
     unittest.main()

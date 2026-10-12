@@ -40,7 +40,7 @@ Legacy: Opus 4.8, 4.7, 4.6, 4.5, Opus 5, Fable 5, Sonnet 5, 4.6, 4.5. The Opus 4
 
 ## Development process
 
-How work moves from idea to shipped code now lives in one place: the [development-protocol](https://github.com/7alexhale5-rgb/development-protocol) repo. It holds 19 skills, a 17-row evidence checklist, and an installer. Every task follows the same spine: **spec, build, verify, close.** You pin the goal and plan it, build one slice at a time with a check after each, prove the change on the real thing with a second reviewer, then commit, ship and write the handoff. A step counts as done only when an evidence file exists and a check command passes. Install it with:
+How work moves from idea to shipped code now lives in one place: the [development-protocol](https://github.com/7alexhale5-rgb/development-protocol) repo. It holds 20 skills, a 17-row evidence checklist, and an installer. Every task follows the same spine: **spec, build, verify, close.** You pin the goal and plan it, build one slice at a time with a check after each, prove the change on the real thing with a second reviewer, then commit, ship and write the handoff. A step counts as done only when an evidence file exists and a check command passes. Install it with:
 
 ```bash
 git clone https://github.com/7alexhale5-rgb/development-protocol.git
@@ -65,6 +65,12 @@ installed or configured and skip it rather than overwrite it; the only interacti
 optional Phase 6 step below.
 
 Flags: `--dry-run` prints what would happen and changes nothing. `--yes` says yes to the optional development-protocol step. `--skip-dev-protocol` leaves that step out.
+
+The optional block-destructive hook refuses every Bash call when inherited
+`ZDOTDIR` is set, `BASH_ENV`, `ENV`, `SHELLOPTS` or `BASHOPTS` is nonempty,
+or `PS4` contains deferred expansion. This conservative limit also covers
+harmless commands. Review your shell environment before adopting the template;
+refusal does not mean the command itself is destructive.
 
 ### Or cherry-pick from toolkit/env/
 

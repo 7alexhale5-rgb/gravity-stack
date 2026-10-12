@@ -6,7 +6,7 @@ Model Context Protocol (MCP) servers give Claude Code access to external tools a
 
 An MCP server exposes **tools** (functions Claude can call) and **resources** (data Claude can read). When you configure an MCP server, Claude Code launches it as a subprocess or connects to it over the network. The server handles authentication, API calls, and data formatting, presenting a clean interface to Claude.
 
-Register servers with `claude mcp add --scope user`; Claude stores user registrations in `~/.claude.json`. Project registrations belong in `.mcp.json`, not `settings.json`. The JSON snippets below are server blocks for `.mcp.json`; review project approvals before loading them. See the [official MCP guide](https://code.claude.com/docs/en/mcp).
+Register servers with `claude mcp add --scope user`; Claude stores user registrations in `~/.claude.json`. Project registrations belong in `.mcp.json`, not `settings.json`. The JSON snippets below are server blocks for `.mcp.json`; review project approvals before loading them. Keep real secrets outside tracked files. The shared examples use `${VAR}` environment references; set those service variables securely before starting Claude. Unset references warn and do not prove authentication. See the [official MCP guide](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcpjson).
 
 The installer registers five servers and preserves any existing names. Registration, connection and a successful tool call are separate checks. API-key presence alone does not prove access.
 
@@ -46,9 +46,9 @@ Web scraping and crawling service for extracting structured content from website
   "mcpServers": {
     "firecrawl": {
       "command": "npx",
-      "args": ["-y", "firecrawl-mcp"],
+      "args": ["-y", "firecrawl-mcp@3.9.0"],
       "env": {
-        "FIRECRAWL_API_KEY": "fc-your-key-here"
+        "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
       }
     }
   }
@@ -74,7 +74,7 @@ AI-powered web search for real-time information retrieval.
       "command": "npx",
       "args": ["-y", "@perplexity-ai/mcp-server@0.8.2"],
       "env": {
-        "PERPLEXITY_API_KEY": "pplx-your-key-here"
+        "PERPLEXITY_API_KEY": "${PERPLEXITY_API_KEY}"
       }
     }
   }
@@ -124,7 +124,7 @@ Access Hacker News stories, comments, and search.
 ```json
 {
   "mcpServers": {
-    "hackernews": {
+    "hacker-news": {
       "command": "npx",
       "args": ["-y", "hn-mcp@1.0.0"]
     }
@@ -246,16 +246,16 @@ Replace the memory file placeholder with an absolute path before use. Existing m
     },
     "firecrawl": {
       "command": "npx",
-      "args": ["-y", "firecrawl-mcp"],
+      "args": ["-y", "firecrawl-mcp@3.9.0"],
       "env": {
-        "FIRECRAWL_API_KEY": "fc-xxx"
+        "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
       }
     },
     "perplexity": {
       "command": "npx",
       "args": ["-y", "@perplexity-ai/mcp-server@0.8.2"],
       "env": {
-        "PERPLEXITY_API_KEY": "pplx-xxx"
+        "PERPLEXITY_API_KEY": "${PERPLEXITY_API_KEY}"
       }
     },
     "memory": {
@@ -265,7 +265,7 @@ Replace the memory file placeholder with an absolute path before use. Existing m
         "MEMORY_FILE_PATH": "/absolute/path/to/memory/graph.json"
       }
     },
-    "hackernews": {
+    "hacker-news": {
       "command": "npx",
       "args": ["-y", "hn-mcp@1.0.0"]
     },
@@ -292,9 +292,9 @@ Replace the memory file placeholder with an absolute path before use. Existing m
 | Hacker News | No | -- |
 | Obsidian | No | Obsidian MCP plugin |
 | Crawl4AI | No | -- |
-| Gmail | Yes (OAuth) | Google Cloud Console |
-| Google Calendar | Yes (OAuth) | Google Cloud Console |
-| Slack | Yes (Bot Token) | [api.slack.com/apps](https://api.slack.com/apps) |
+| Gmail | Host authorization | Host integration settings |
+| Google Calendar | Host authorization | Host integration settings |
+| Slack | Host authorization | Host integration settings |
 
 ## Building Custom MCP Servers
 
