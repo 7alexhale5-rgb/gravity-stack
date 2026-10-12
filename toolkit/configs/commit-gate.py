@@ -84,7 +84,10 @@ def shell_tokens(command):
     def literal_arithmetic(expression):
         # Numeric literals and one simple assignment have no indirect variable
         # or array lookup whose runtime value could execute substitutions.
-        value = re.sub(r"^\s*[A-Za-z_][A-Za-z0-9_]*\s*=(?!=)", "", expression, count=1)
+        assignment = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)", expression)
+        if assignment:
+            check_deferred_input(assignment.group(1), unresolved=True)
+        value = expression[assignment.end() :] if assignment else expression
         return bool(value.strip()) and bool(re.fullmatch(r"[0-9 \t+*/%()<>|&^!~=.-]+", value))
 
     def inspect_substitutions(text, depth=0, quote_sensitive=True):
@@ -112,6 +115,11 @@ def shell_tokens(command):
                 reference = text[position + 2 : end] if end >= 0 else ""
                 if reference.startswith("!"):
                     raise ValueError("unresolved indirect parameter reference cannot be inspected")
+                assignment = re.match(
+                    r"^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?:?=", reference
+                )
+                if assignment:
+                    check_deferred_input(assignment.group(1), unresolved=True)
                 indexed = re.match(r"^[A-Za-z_][A-Za-z0-9_]*\[(.*)\]", reference)
                 if (
                     indexed
@@ -530,6 +538,22 @@ def shell_tokens(command):
                 ):
                     end += 1
                 operands = [value.replace("\ue003", "") for value in words[index:end]]
+                if name == "printf":
+                    format_args = operands
+                    if format_args and format_args[0].startswith("-v"):
+                        format_args = format_args[2 if format_args[0] == "-v" else 1 :]
+                    if format_args and format_args[0] == "--":
+                        format_args = format_args[1:]
+                    if format_args and "\ue002" in format_args[0]:
+                        raise ValueError("unresolved printf format can write deferred shell inputs")
+                    if format_args and re.search(r"%(?:[0-9]+\$)?[-+ #0\x27]*(?:[0-9]+|\*)?(?:\.(?:[0-9]*|\*))?[hljztL]*n", format_args[0].replace("%%", "")):
+                        # Count formats may repeat or consume width arguments.
+                        # Any possible deferred destination must remain inert;
+                        # literal formats without count writes keep data inert.
+                        for target in format_args[1:]:
+                            if "\ue002" in target:
+                                raise ValueError("unresolved printf count destination")
+                            check_deferred_input(target.split("[", 1)[0], unresolved=True)
                 if name == "printf" and operands and operands[0].startswith("-v"):
                     if operands[0] == "-v":
                         if len(operands) < 2:
@@ -1465,7 +1489,7 @@ def commit_directories(command, base):
                 format_args = effective_args[1:]
                 if format_args and format_args[0] == "--":
                     format_args = format_args[1:]
-                if format_args and re.search(r"%(?:[0-9]+\$)?[-+ #0]*(?:[0-9]+|\*)?(?:\.(?:[0-9]+|\*))?n", format_args[0].replace("%%", "")):
+                if format_args and re.search(r"%(?:[0-9]+\$)?[-+ #0\x27]*(?:[0-9]+|\*)?(?:\.(?:[0-9]*|\*))?[hljztL]*n", format_args[0].replace("%%", "")):
                     uncertain_cwd = True
             # A preceding program could alter Git configuration between this
             # read-only query and the later commit. Keep uncertain programs in
