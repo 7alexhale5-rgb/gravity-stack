@@ -3,17 +3,19 @@
 Shared Groq API client for Gravity Stack hooks/scripts.
 Single source of truth for API key loading and LLM calls.
 """
+
 from __future__ import annotations
 
 import json
 import os
 import subprocess
-import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
 DEFAULT_MODEL = "moonshotai/kimi-k2-instruct-0905"
 DEFAULT_TIMEOUT = 15
+API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
 def _load_api_key() -> str:
@@ -32,8 +34,9 @@ def _load_api_key() -> str:
             if stripped.startswith("export GROQ_API_KEY="):
                 value = stripped.split("=", 1)[1].strip()
                 # Remove surrounding quotes
-                if (value.startswith('"') and value.endswith('"')) or \
-                   (value.startswith("'") and value.endswith("'")):
+                if (value.startswith('"') and value.endswith('"')) or (
+                    value.startswith("'") and value.endswith("'")
+                ):
                     value = value[1:-1]
                 return value
     except Exception:
@@ -62,9 +65,10 @@ def call_groq(
     """Call Groq API. Returns parsed JSON dict or None on failure.
 
     Uses direct file parsing for API key (no eval/shell injection).
-    Uses curl subprocess with key via stdin-safe argument passing.
+    Sends the key and prompt in the HTTPS request, never process arguments.
     Validates response structure before returning.
     """
+    deadline = time.monotonic() + timeout
     api_key = _load_api_key()
     if not api_key:
         log_failure("no_api_key")
@@ -80,24 +84,37 @@ def call_groq(
         payload["response_format"] = {"type": "json_object"}
 
     try:
-        result = subprocess.run(
-            ["curl", "-s", "--max-time", str(timeout),
-             "https://api.groq.com/openai/v1/chat/completions",
-             "-H", f"Authorization: Bearer {api_key}",
-             "-H", "Content-Type: application/json",
-             "-d", json.dumps(payload)],
-            capture_output=True, text=True, timeout=timeout + 5,
-        )
-
-        if result.returncode != 0:
-            log_failure(f"curl_exit_{result.returncode}")
+        # Config travels over stdin: neither credentials nor prompts enter argv.
+        # Curl bounds slow-drip reads; the parent bounds connection and all reading.
+        if "\r" in api_key or "\n" in api_key:
+            log_failure("invalid_key_header")
             return None
-
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            log_failure("transport_timeout")
+            return None
+        config = "\n".join([
+            "url = " + json.dumps(API_URL),
+            "header = " + json.dumps("Authorization: Bearer " + api_key, ensure_ascii=False),
+            'header = "Content-Type: application/json"',
+            "data = " + json.dumps(json.dumps(payload), ensure_ascii=False),
+        ])
+        result = subprocess.run(
+            ["curl", "--silent", "--show-error", "--fail", "--max-time",
+             str(remaining), "--config", "-"],
+            input=config, capture_output=True, text=True, timeout=remaining,
+        )
+        if result.returncode:
+            log_failure("transport_exit_" + str(result.returncode))
+            return None
+        if time.monotonic() >= deadline:
+            log_failure("transport_timeout")
+            return None
         response = json.loads(result.stdout)
 
         # Validate response structure (OWASP A03 mitigation)
         if not isinstance(response, dict) or "choices" not in response:
-            log_failure(f"invalid_response_structure: {result.stdout[:200]}")
+            log_failure("invalid_response_structure")
             return None
 
         choices = response.get("choices", [])
@@ -112,12 +129,12 @@ def call_groq(
 
         return json.loads(content)
 
-    except json.JSONDecodeError as e:
-        log_failure(f"json_decode_error: {e}")
+    except json.JSONDecodeError:
+        log_failure("json_decode_error")
         return None
     except subprocess.TimeoutExpired:
-        log_failure("timeout")
+        log_failure("transport_timeout")
         return None
-    except Exception as e:
-        log_failure(f"unexpected: {type(e).__name__}: {e}")
+    except Exception as error:
+        log_failure(f"unexpected_{type(error).__name__}")
         return None

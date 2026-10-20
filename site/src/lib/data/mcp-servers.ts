@@ -16,7 +16,7 @@ export const mcpServers: MCPServer[] = [
     priority: "high",
     apiKeyRequired: false,
     description: "Full browser automation. Navigate pages, click elements, fill forms, take screenshots, evaluate JavaScript. Essential for E2E testing and web interaction.",
-    config: { command: "npm", args: ["exec", "@playwright/mcp@0.0.68"] },
+    config: { command: "npx", args: ["-y", "@playwright/mcp@0.0.68"] },
   },
   {
     name: "Firecrawl",
@@ -25,7 +25,7 @@ export const mcpServers: MCPServer[] = [
     priority: "medium",
     apiKeyRequired: true,
     description: "Structured web scraping. Extracts clean content from any URL. Research Stack uses its scrape and /v2/search endpoints; the old /deep-research endpoint is deprecated.",
-    config: { command: "npm", args: ["exec", "firecrawl-mcp@3.9.0"] },
+    config: { command: "npx", args: ["-y", "firecrawl-mcp@3.9.0"], env: { FIRECRAWL_API_KEY: "${FIRECRAWL_API_KEY}" } },
   },
   {
     name: "Perplexity",
@@ -34,7 +34,7 @@ export const mcpServers: MCPServer[] = [
     priority: "medium",
     apiKeyRequired: true,
     description: "AI-powered search. Ask questions, get cited answers. One of the reliable first-round sources in Research Stack.",
-    config: { command: "npm", args: ["exec", "@perplexity-ai/mcp-server@0.8.2"] },
+    config: { command: "npx", args: ["-y", "@perplexity-ai/mcp-server@0.8.2"], env: { PERPLEXITY_API_KEY: "${PERPLEXITY_API_KEY}" } },
   },
   {
     name: "Memory",
@@ -43,7 +43,7 @@ export const mcpServers: MCPServer[] = [
     priority: "optional",
     apiKeyRequired: false,
     description: "Graph-based entity memory. Stores relationships between concepts in a local JSON file. Good for session-level knowledge.",
-    config: { command: "npm", args: ["exec", "@modelcontextprotocol/server-memory@2026.1.26", "--file", "$HOME/.claude/memory/graph.json"] },
+    config: { command: "npx", args: ["-y", "@modelcontextprotocol/server-memory@2026.1.26"], env: { MEMORY_FILE_PATH: "/absolute/path/to/memory/graph.json" } },
   },
   {
     name: "Hacker News",
@@ -52,7 +52,7 @@ export const mcpServers: MCPServer[] = [
     priority: "optional",
     apiKeyRequired: false,
     description: "Search and browse Hacker News. Useful for tech research workflows.",
-    config: { command: "npm", args: ["exec", "hn-mcp@1.0.0"] },
+    config: { command: "npx", args: ["-y", "hn-mcp@1.0.0"] },
   },
   {
     name: "Obsidian",
@@ -93,7 +93,7 @@ export const researchServers: MCPServer[] = [
     priority: "optional",
     apiKeyRequired: true,
     description: "Paid SERP, keyword and backlink data. Used by the seo focus tag; free fallbacks are Search Console, PageSpeed and site-scoped search.",
-    config: { command: "npm", args: ["exec", "dataforseo-mcp-server@3.1.2"], env: { DATAFORSEO_USERNAME: "your-login", DATAFORSEO_PASSWORD: "your-password" } },
+    config: { command: "npx", args: ["-y", "dataforseo-mcp-server@3.1.2"], env: { DATAFORSEO_USERNAME: "${DATAFORSEO_USERNAME}", DATAFORSEO_PASSWORD: "${DATAFORSEO_PASSWORD}" } },
   },
   {
     name: "Mobbin",
@@ -165,7 +165,7 @@ export const researchServers: MCPServer[] = [
     priority: "optional",
     apiKeyRequired: false,
     description: "Drive Chrome and record performance traces. Used by the perf focus tag in audit mode (--target).",
-    config: { command: "npm", args: ["exec", "chrome-devtools-mcp@1.10.1"] },
+    config: { command: "npx", args: ["-y", "chrome-devtools-mcp@1.10.1"] },
   },
 ];
 
