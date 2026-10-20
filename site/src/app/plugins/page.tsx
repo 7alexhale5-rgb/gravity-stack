@@ -6,7 +6,7 @@ import { ScrollReveal } from "@/components/ScrollReveal";
 
 export const metadata = {
   title: "Plugins",
-  description: "31 verified plugins organized by category. Every one running in production.",
+  description: "31 plugins organized by category, with descriptions and setup guidance.",
 };
 
 export default function PluginsPage() {

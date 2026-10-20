@@ -15,6 +15,7 @@
 
 - `tests/test_sanitization.py`: external-profile path, EOF, error and output regression tests.
 - `tests/test_installer.py`: regression tests for optional process-skill installation.
+- `tests/check_rendered_mcp.py`: checks copied registration JSON and destination after the site build.
 - `tests/test_hook_safety.py`: stdin hook decisions, failed commit checks and credential transport regressions.
 - `tests/test_eval_reports.py`: offline failed-case retention, private modes and fresh batch diagnostics.
 - `tests/run_ci_tests.py`: disjoint CI shards of complete discovery, with list-only coverage proof.

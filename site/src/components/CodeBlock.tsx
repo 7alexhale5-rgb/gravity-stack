@@ -100,7 +100,6 @@ function ShikiOutput({ html, fallback }: { html: string; fallback: string }) {
 
   // SECURITY: shiki output is trusted developer content from static data modules,
   // never from user input. Safe to render as raw HTML.
-  // eslint-disable-next-line react/no-danger
   return (
     <div
       className="overflow-x-auto p-4 text-sm [&_pre]:!bg-transparent [&_code]:font-mono"

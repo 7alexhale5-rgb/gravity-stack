@@ -43,15 +43,15 @@ const setupSteps = [
   },
   {
     title: "Hooks",
-    description: "Installs commit gate, file guard, notification, session backup, auto-lint, and CARL hooks.",
+    description: "Installs the commit gate. Fresh settings include starter hooks; agents, CARL and extra hooks require manual setup.",
   },
   {
     title: "Verification",
-    description: "Runs the verification script to confirm all tools are installed and configured correctly.",
+    description: "Checks foundation tools and commit-gate registration. Live hook firing and MCP access require separate tests.",
   },
 ];
 
-const quickStartCode = `git clone https://github.com/alexhale/gravity-stack.git
+const quickStartCode = `git clone https://github.com/7alexhale5-rgb/gravity-stack.git
 cd gravity-stack/toolkit
 chmod +x install.sh
 ./install.sh`;
@@ -63,7 +63,7 @@ export default function SetupPage() {
         <span className="gradient-text">Setup Guide</span>
       </h1>
       <p className="text-xl text-dim max-w-2xl mb-12">
-        From zero to a fully-configured AI-native development environment.
+        Install the foundation for an AI development environment.
         The installer is idempotent — safe to re-run any time.
       </p>
 
@@ -112,7 +112,7 @@ export default function SetupPage() {
       <ScrollReveal delay={0.1}>
         <Callout variant="tip" title="Idempotent">
           Every script checks before installing. Safe to re-run any time.
-          Will never downgrade or overwrite existing configs.
+          Existing settings and registered MCP names are preserved.
         </Callout>
       </ScrollReveal>
 

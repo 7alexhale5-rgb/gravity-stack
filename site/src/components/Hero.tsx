@@ -9,36 +9,39 @@ function CountUp({ target, duration = 2 }: { target: number | string; duration?:
   const numTarget = typeof target === "string" ? parseInt(target) || 0 : target;
   const [count, setCount] = useState(0);
   const ref = useRef<HTMLSpanElement>(null);
-  const [hasAnimated, setHasAnimated] = useState(false);
 
   useEffect(() => {
-    if (hasAnimated) return;
+    let frame = 0;
+    let started = false;
     const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (prefersReducedMotion) {
-      setCount(numTarget);
-      setHasAnimated(true);
-      return;
+      frame = requestAnimationFrame(() => setCount(numTarget));
+      return () => cancelAnimationFrame(frame);
     }
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
-          setHasAnimated(true);
+        if (entry.isIntersecting && !started) {
+          started = true;
+          observer.disconnect();
           const start = performance.now();
           const animate = (now: number) => {
             const elapsed = now - start;
             const progress = Math.min(elapsed / (duration * 1000), 1);
             const eased = 1 - Math.pow(1 - progress, 3); // easeOutCubic
             setCount(Math.round(numTarget * eased));
-            if (progress < 1) requestAnimationFrame(animate);
+            if (progress < 1) frame = requestAnimationFrame(animate);
           };
-          requestAnimationFrame(animate);
+          frame = requestAnimationFrame(animate);
         }
       },
       { threshold: 0.5 }
     );
     if (ref.current) observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, [numTarget, duration, hasAnimated]);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [numTarget, duration]);
 
   const display = typeof target === "string" && target.includes("+")
     ? `${count}+${target.split("+").slice(1).join("+")}`
@@ -103,7 +106,7 @@ export function Hero() {
           animate={{ opacity: 1, filter: "blur(0px)" }}
           transition={{ duration: 0.8, delay: 0.6 }}
         >
-          The complete blueprint for a top 1% AI-native development environment.
+          A practical blueprint for an AI-native development environment.
         </motion.p>
 
         <motion.p
@@ -112,7 +115,7 @@ export function Hero() {
           animate={{ opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.8 }}
         >
-          Open source. Every tool verified in production. Every config real. Ready to fork.
+          Open source. Tools, configuration examples, and setup checks. Ready to fork.
         </motion.p>
 
         {/* Stats with glass cards and count-up */}

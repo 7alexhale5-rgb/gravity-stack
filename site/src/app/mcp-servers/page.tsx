@@ -33,6 +33,12 @@ export default function MCPServersPage() {
         </h2>
       </ScrollReveal>
 
+      <Callout title="Project registration">
+        Add each example to .mcp.json in your project root. Merge its mcpServers
+        entry with existing registrations so other servers stay configured.
+        Replace absolute path placeholders with paths on your own machine.
+      </Callout>
+
       <div className="space-y-6 mb-16">
         {mcpServers.map((server, i) => (
           <ServerCard key={server.slug} server={server} delay={i * 0.06} />
