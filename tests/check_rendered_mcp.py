@@ -38,7 +38,7 @@ def main():
     configs = [json.loads(block) for block in parser.blocks]
     assert configs, "No rendered MCP examples were checked"
     assert "~/.claude/settings.json" not in html, "Unsupported MCP destination shown"
-    assert html.count(">.mcp.json<") == len(configs), (
+    assert html.count(">.mcp.json (environment references only)<") == len(configs), (
         "Project destination missing for an example"
     )
     assert all(config.get("mcpServers") for config in configs), (
