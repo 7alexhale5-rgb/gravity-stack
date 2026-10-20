@@ -130,7 +130,7 @@ export default function ManifestoPage() {
         <ul className="space-y-3 text-dim">
           {[
             <>Tools and <span className="text-text">verification steps</span> are documented; test selected tools in your own environment</>,
-            <>Installer versions are <span className="text-text">pinned</span>; verify updates before adoption</>,
+            <>MCP package versions are <span className="text-text">pinned</span>; bootstrap tools follow upstream releases</>,
             <><span className="text-text">Shareable configuration examples</span> keep credentials and private settings local</>,
             <><span className="text-text">Development workflows</span> use tests and review to confirm results</>,
           ].map((item, i) => (

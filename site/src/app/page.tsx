@@ -69,8 +69,8 @@ const differentiators = [
     detail: "Verify selected tools in your own environment",
   },
   {
-    text: "Installer versions are pinned",
-    detail: "Check updates before adopting them",
+    text: "MCP package versions are pinned",
+    detail: "Bootstrap tools follow upstream releases; review updates",
   },
   {
     text: "Shareable configuration examples are included",
