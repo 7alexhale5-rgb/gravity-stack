@@ -531,6 +531,673 @@ class DestructiveHookTests(OwnedShellFixture):
 
 
 class CommitGateTests(OwnedShellFixture):
+    def test_review40_count_format_flags_precision_and_reuse(self):
+        with tempfile.TemporaryDirectory(prefix="gravity40-count-grammar-") as temporary:
+            root = Path(temporary)
+            binary, home = root / "bin", root / "home"
+            binary.mkdir()
+            home.mkdir()
+            log = root / "calls"
+            real_git = shutil.which("git")
+            for number in ("0", "1"):
+                selected = root / number
+                selected.mkdir()
+                (selected / ".gitconfig").write_text(
+                    '[remote "origin"]\n mirror = true\n push = +HEAD:refs/heads/main\n')
+                (root / ("startup" + number)).write_text("git commit -am broken\n")
+            # A numeric BASH_ENV selects a file; a numeric HOME selects a folder.
+            # Use separate owned working directories for these two shell effects.
+            startup_room = root / "startup-room"
+            startup_room.mkdir()
+            for number in ("0", "1"):
+                (startup_room / number).write_text("git commit -am broken\n")
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nif [ "$1" = push ]; then\n'
+                            'mirror=$("$REAL_GIT" config --get remote.origin.mirror)\n'
+                            'ref=$("$REAL_GIT" config --get remote.origin.push)\n'
+                            'printf "mirror=%s\\nref=%s\\n" "$mirror" "$ref" > "$FAKE_GIT_LOG"\n'
+                            'else printf "%s\\n" "$*" > "$FAKE_GIT_LOG"; fi\n')
+            fake.chmod(0o755)
+            env = {"PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                   "HOME": str(home), "XDG_CONFIG_HOME": str(home / "xdg"),
+                   "GIT_CONFIG_NOSYSTEM": "1", "REAL_GIT": real_git,
+                   "FAKE_GIT_LOG": str(log)}
+            for fmt, widths in (("%'n", ()), ("%.n", ()), ("%'.n", ()),
+                                ("%*n", ("2",)), ("%.*n", ("2",)),
+                                ("%%%n", ()), ("%lln", ()), ("%hhn", ())):
+                for wrapper in ("", "builtin ", "command -p "):
+                    for target in ("BASH_ENV", "HOME"):
+                        with self.subTest(fmt=fmt, wrapper=wrapper, target=target):
+                            preamble = wrapper + shlex.join(["printf", fmt, *widths, target])
+                            command = ("BASH_ENV= bash -c " + shlex.quote(preamble + '; bash -c ":"')
+                                       if target == "BASH_ENV" else preamble + "; git push origin")
+                            actual = subprocess.run(["bash", "-c", command],
+                                                    cwd=startup_room if target == "BASH_ENV" else root,
+                                                    env=env, capture_output=True, timeout=5)
+                            self.assertEqual(actual.returncode, 0, actual.stderr)
+                            self.assertEqual(log.read_text(), "commit -am broken\n" if target == "BASH_ENV"
+                                             else "mirror=true\nref=+HEAD:refs/heads/main\n")
+                            if target == "BASH_ENV":
+                                self.assert_review39_refused(command)
+                            else:
+                                self.assertEqual(DestructiveHookTests().decision(command), "deny")
+                                for hook in COMMIT_HOOKS:
+                                    self.assertEqual(self.run_hook(hook, preamble + "; git commit -am broken"), (2, 0))
+            for fmt in ("%%'n", "%%.n", "%%%%n"):
+                command = shlex.join(["printf", fmt, "HOME"]) + "; git push origin feature"
+                with self.subTest(nonmutating_format=fmt):
+                    actual = subprocess.run(["bash", "-c", command], cwd=root, env=env,
+                                            capture_output=True, timeout=5)
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertEqual(log.read_text(), "mirror=\nref=\n")
+                    for hook in COMMIT_HOOKS:
+                        self.assertEqual(self.run_hook(hook, command), (0, 0))
+                    self.assertEqual(DestructiveHookTests().decision(command), "allow")
+
+    def test_review40_parameter_mutations_execute_owned_startup(self):
+        with tempfile.TemporaryDirectory(prefix="gravity40-parameter-") as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = {"PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                   "HOME": str(root), "FAKE_GIT_LOG": str(log)}
+            expressions = (
+                'echo "${BASH_ENV:=./startup}"',
+                'echo "${unused:-${BASH_ENV:=./startup}}"',
+                'printf "%s" "${BASH_ENV:=./startup}"',
+                ': "${BASH_ENV:=./startup}"',
+                'unset BASH_ENV; export BASH_ENV; echo "${BASH_ENV=./startup}"',
+            )
+            for operation in ("commit -am broken", "push --force origin main"):
+                (root / "startup").write_text("git " + operation + "\n")
+                for expression in expressions:
+                    for wrapper in ("", "command "):
+                        program = expression + '; ' + wrapper + 'bash -c ":"'
+                        command = "BASH_ENV= bash -c " + shlex.quote(program)
+                        with self.subTest(operation=operation, expression=expression, wrapper=wrapper):
+                            log.write_text("")
+                            actual = subprocess.run(["bash", "-c", command], cwd=root,
+                                                    env=env, capture_output=True, timeout=5)
+                            self.assertEqual(actual.returncode, 0, actual.stderr)
+                            self.assertIn(operation, log.read_text().splitlines())
+                            self.assert_review39_refused(command)
+
+    def test_review40_arithmetic_mutations_execute_owned_startup(self):
+        with tempfile.TemporaryDirectory(prefix="gravity40-arithmetic-") as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = {"PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                   "HOME": str(root), "FAKE_GIT_LOG": str(log)}
+            expressions = ('echo "$((BASH_ENV=1))"', '((BASH_ENV=1))',
+                           'let "BASH_ENV=1"', 'a=(one two); echo "${a[BASH_ENV=1]}"',
+                           'a=abc; echo "${a:BASH_ENV=1:1}"',
+                           'printf "%n" BASH_ENV', 'builtin printf "%n" BASH_ENV')
+            for operation in ("commit -am broken", "push --force origin main"):
+                for number in ("0", "1"):
+                    (root / number).write_text("git " + operation + "\n")
+                for expression in expressions:
+                    command = "BASH_ENV= bash -c " + shlex.quote(expression + '; bash -c ":"')
+                    with self.subTest(operation=operation, expression=expression):
+                        log.write_text("")
+                        actual = subprocess.run(["bash", "-c", command], cwd=root,
+                                                env=env, capture_output=True, timeout=5)
+                        self.assertEqual(actual.returncode, 0, actual.stderr)
+                        self.assertIn(operation, log.read_text().splitlines())
+                        self.assert_review39_refused(command)
+
+    def test_review40_all_deferred_selectors_and_execution_contexts(self):
+        for variable in ("BASH_ENV", "ENV", "ZDOTDIR", "PS4", "SHELLOPTS", "BASHOPTS"):
+            for expression in ('echo "${NAME:=1}"', 'echo "${NAME=1}"',
+                               'echo "${NAME[0]:=1}"', 'echo "$((NAME=1))"',
+                               '(( NAME = 1 ))', 'let "NAME=1"'):
+                command = expression.replace("NAME", variable)
+                with self.subTest(variable=variable, expression=expression):
+                    self.assert_review39_refused(command)
+        for command in ('echo "$(echo "${BASH_ENV:=1}")"',
+                        'cat <(echo "${BASH_ENV:=1}")',
+                        'bash -c \'printf "%s" "${BASH_ENV:=1}"\'',
+                        'env bash -c \'echo "$((BASH_ENV=1))"\'',
+                        'command bash -c \'let "BASH_ENV=1"\'',
+                        'printf "%n" "$target"; bash -c ":"'):
+            with self.subTest(command=command):
+                self.assert_review39_refused(command)
+
+    def test_review40_printf_count_changes_owned_git_config(self):
+        with tempfile.TemporaryDirectory(prefix="gravity40-config-") as temporary:
+            root = Path(temporary)
+            home, binary = root / "home", root / "bin"
+            home.mkdir()
+            binary.mkdir()
+            real_git = shutil.which("git")
+            settings = '[remote "origin"]\n mirror = true\n push = +HEAD:refs/heads/main\n'
+            for number in ("0", "1"):
+                selected = root / number
+                (selected / "git").mkdir(parents=True)
+                (selected / ".gitconfig").write_text(settings)
+                (selected / "git/config").write_text(settings)
+            env = {"PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                   "HOME": str(home), "XDG_CONFIG_HOME": str(home / "xdg"),
+                   "GIT_CONFIG_NOSYSTEM": "1", "REAL_GIT": real_git,
+                   "FAKE_GIT_LOG": str(root / "calls")}
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\n[ "$1" = push ] || exit 91\n'
+                            'mirror=$("$REAL_GIT" config --get remote.origin.mirror)\n'
+                            'ref=$("$REAL_GIT" config --get remote.origin.push)\n'
+                            'printf "mirror=%s\\nref=%s\\n" "$mirror" "$ref" > "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            for variable in ("HOME", "XDG_CONFIG_HOME"):
+                for wrapper in ("", "builtin ", "command ", "command -p ",
+                                "command builtin ", "builtin command "):
+                    for form in ("printf '%n' NAME", "printf -- '%n' NAME", "printf '%s%n' x NAME", "printf '%ln' NAME", "printf '%hn' NAME", "printf '%jn' NAME", "printf '%zn' NAME", "printf '%tn' NAME", "printf '%Ln' NAME"):
+                        preamble = wrapper + form.replace("NAME", variable)
+                        command = preamble + "; git push origin"
+                        with self.subTest(variable=variable, wrapper=wrapper, form=form):
+                            actual = subprocess.run(["bash", "-c", command], cwd=root,
+                                                    env=env, capture_output=True, timeout=5)
+                            self.assertEqual(actual.returncode, 0, actual.stderr)
+                            self.assertEqual((root / "calls").read_text(),
+                                             "mirror=true\nref=+HEAD:refs/heads/main\n")
+                            self.assertEqual(DestructiveHookTests().decision(command), "deny")
+                            for hook in COMMIT_HOOKS:
+                                with self.subTest(hook=hook):
+                                    self.assertEqual(self.run_hook(hook, preamble + "; git commit -am broken"), (2, 0))
+
+    def test_review40_printf_config_selectors_and_wrappers(self):
+        for variable in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_COUNT",
+                         "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "HOME", "XDG_CONFIG_HOME"):
+            for wrapper in ("", "builtin ", "command -p "):
+                command = wrapper + "printf '%n' " + variable + "; git push origin"
+                with self.subTest(variable=variable, wrapper=wrapper):
+                    self.assertEqual(DestructiveHookTests().decision(command), "deny")
+
+    def test_review40_nonmutating_expansions_and_printf_controls(self):
+        commands = ("printf '%s' '${BASH_ENV:=./startup}'",
+                    "printf '%s' '$((BASH_ENV=1))'", "echo \\${BASH_ENV:=./startup}",
+                    'echo "${BASH_ENV:-./startup}"', 'echo "${BASH_ENV:+./startup}"',
+                    'echo "$((answer=1))"', '(( answer = 1 ))', 'let "answer=1"',
+                    "printf '%n' count", "printf '%%n' BASH_ENV", "printf '%s' '%n' BASH_ENV",
+                    "printf '%s' 'printf %n HOME'; git push origin feature",
+                    "printf '%%n' HOME; git push origin feature",
+                    "builtin printf '%s' '%n'; git push origin feature",
+                    "command printf -- '%s' '%n'; git push origin feature",
+                    "bash -c 'printf \"%s\" \"${BASH_ENV:-./startup}\"; true'")
+        for command in commands:
+            with self.subTest(command=command):
+                for hook in COMMIT_HOOKS:
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+                self.assertEqual(DestructiveHookTests().decision(command), "allow")
+
+    def assert_review39_refused(self, command):
+        for hook in COMMIT_HOOKS:
+            with self.subTest(command=command, hook=hook):
+                self.assertEqual(self.run_hook(hook, command), (2, 0))
+        with self.subTest(command=command, hook="destructive"):
+            self.assertEqual(DestructiveHookTests().decision(command), "deny")
+
+    def test_review39_xtrace_executes_only_owned_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix="gravity39-trace-") as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = {"PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                   "HOME": str(root), "FAKE_GIT_LOG": str(log)}
+            for operation in ("commit -am broken", "push --force origin main"):
+                for trace in ("set -x", "set -ex", "set -o xtrace", "builtin set -x", "command set -x"):
+                    command = "PS4=" + shlex.quote("$(git " + operation + ")") + "; " + trace + "; true"
+                    log.write_text("")
+                    actual = subprocess.run(["bash", "-c", command], cwd=root, env=env,
+                                            capture_output=True, timeout=5)
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertIn(operation, log.read_text().splitlines())
+                    self.assert_review39_refused(command)
+
+    def test_review39_startup_files_execute_only_owned_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix="gravity39-startup-") as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = {"PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                   "HOME": str(root), "FAKE_GIT_LOG": str(log)}
+            startup = root / "startup"
+            for operation in ("commit -am broken", "push --force origin main"):
+                startup.write_text("git " + operation + "\n")
+                (root / ".zshenv").write_text("git " + operation + "\n")
+                selected = "BASH_ENV=" + shlex.quote(str(startup))
+                commands = [selected + " bash -c ':'",
+                            "env " + selected + " bash -c ':'",
+                            "export " + selected + "; bash -c ':'",
+                            selected + " command bash -c ':'",
+                            selected + " exec bash -c ':'",
+                            selected + " nice bash -c ':'",
+                            "BASH_ENV=<(printf '%s\\n' " + shlex.quote("git " + operation) + ") bash -c ':'",
+                            "ENV=" + shlex.quote(str(startup)) + " sh -ic ':'"]
+                if shutil.which("zsh"):
+                    commands.append("ZDOTDIR=" + shlex.quote(str(root)) + " zsh -c ':'")
+                for command in commands:
+                    log.write_text("")
+                    actual = subprocess.run(["bash", "-c", command], cwd=root, env=env,
+                                            capture_output=True, timeout=5)
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertIn(operation, log.read_text().splitlines())
+                    self.assert_review39_refused(command)
+
+    def test_review39_deferred_selector_writes_and_wrappers(self):
+        for variable in ("PS4", "BASH_ENV", "ENV", "ZDOTDIR", "SHELLOPTS", "BASHOPTS"):
+            value = "'$(git commit -am broken)'" if variable == "PS4" else "/owned/startup"
+            for form in ("{name}={value}; true", "env {name}={value} bash -c ':'",
+                         "export {name}={value}; true", "declare {name}={value}; true",
+                         "typeset {name}={value}; true", "readonly {name}={value}; true",
+                         "builtin export {name}={value}; true",
+                         "printf -v {name} %s {value}; true", "read {name} </owned/input"):
+                self.assert_review39_refused(form.format(name=variable, value=value))
+        for wrapper in ("", "command ", "exec ", "env ", "nice ", "nohup "):
+            for shell in ("bash -xc ':'", "bash --xtrace -c ':'", "sh -xc ':'", "zsh -xc ':'"):
+                self.assert_review39_refused(wrapper + shell)
+        for command in ("set -x; true", "set -ex; true", "set -o xtrace; true",
+                        "builtin set -x; true", "SHELLOPTS=xtrace bash -c ':'"):
+            self.assert_review39_refused(command)
+
+    def test_review39_inherited_uncertainty_reaches_all_entrypoints(self):
+        with tempfile.TemporaryDirectory(prefix="gravity39-inherited-") as temporary:
+            root = Path(temporary)
+            startup = root / "startup"
+            startup.write_text(":\n")
+            (root / ".zshenv").write_text(":\n")
+            # Startup content is owned and harmless: a shell may source it before
+            # Python starts. These assertions prove the guard verdict only.
+            for variable, value in (("BASH_ENV", str(startup)), ("ENV", str(startup)),
+                                    ("ZDOTDIR", str(root)), ("PS4", "${unknown}"),
+                                    ("SHELLOPTS", "xtrace")):
+                with mock.patch.dict(os.environ, {variable: value}):
+                    for command in ("true", "bash -c ':'", "env bash -c ':'"):
+                        with self.subTest(variable=variable, command=command):
+                            self.assert_review39_refused(command)
+
+    def test_review39_printed_data_and_inert_controls(self):
+        for command in ("printf '%s' 'PS4=$(git commit -am literal)'",
+                        "printf '%s' 'BASH_ENV=/owned bash -c true'",
+                        "printf '%s' 'ENV=/owned ZDOTDIR=/owned set -x'",
+                        "printf '%s' 'bash -xc true'", "PS4='+ '; true",
+                        "set +x; true", "set -- -x; true", "set -o; true",
+                        "BASH_ENV= ENV= true", "bash -c ':'", "env bash -c ':'",
+                        "cat <<'EOF'\nPS4='$(git commit -am literal)'; set -x\nEOF\n",
+                        "git push origin feature"):
+            for hook in COMMIT_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+            with self.subTest(command=command, hook="destructive"):
+                self.assertEqual(DestructiveHookTests().decision(command), "allow")
+
+    def test_review38_continued_heredoc_headers_execute_only_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix="gravity38-heredoc-") as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = {
+                "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                "HOME": str(root),
+                "XDG_CONFIG_HOME": str(root / "xdg"),
+                "FAKE_GIT_LOG": str(log),
+            }
+            for delimiter in ("EOF", "'EOF'", '"EOF"'):
+                for header in (
+                    "cat <<{delimiter} \\\n| bash\n",
+                    "cat <<{delimiter} | \\\nbash\n",
+                    "cat <<{delimiter} \\\n\\\n| bash\n",
+                    "cat \\\n<<{delimiter} \\\n| bash\n",
+                    "cat <<-{delimiter} \\\n| bash\n",
+                ):
+                    for operation in ("commit -am broken", "push --force origin main"):
+                        command = (
+                            header.format(delimiter=delimiter)
+                            + "git "
+                            + operation
+                            + "\nEOF\n"
+                        )
+                        log.write_text("")
+                        actual = subprocess.run(
+                            ["bash", "-c", command],
+                            cwd=root,
+                            env=env,
+                            capture_output=True,
+                            timeout=5,
+                        )
+                        self.assertEqual(actual.returncode, 0, actual.stderr)
+                        self.assertEqual(log.read_text().strip(), operation)
+                        for hook in COMMIT_HOOKS:
+                            with self.subTest(command=command, hook=hook):
+                                self.assertEqual(self.run_hook(hook, command), (2, 0))
+                        with self.subTest(command=command, hook="destructive"):
+                            self.assertEqual(
+                                DestructiveHookTests().decision(command), "deny"
+                            )
+
+    def test_review38_owned_configuration_changes_fake_push_effects(self):
+        with tempfile.TemporaryDirectory(prefix="gravity38-config-") as temporary:
+            root = Path(temporary)
+            home, alternate, xdg, clean, other, binary = (
+                root / name
+                for name in ("home", "alternate", "xdg", "clean", "other", "bin")
+            )
+            for path in (home, alternate, xdg / "git", clean, other, binary):
+                path.mkdir(parents=True)
+            real_git = shutil.which("git")
+            env = {
+                "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                "HOME": str(home),
+                "XDG_CONFIG_HOME": str(home / "xdg"),
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "REAL_GIT": real_git,
+                "FAKE_GIT_LOG": str(root / "calls"),
+            }
+            for repo in (clean, other):
+                subprocess.run(
+                    [real_git, "init", "-q", str(repo)],
+                    env=env,
+                    check=True,
+                    capture_output=True,
+                )
+            settings = (
+                '[remote "origin"]\n mirror = true\n push = +HEAD:refs/heads/main\n'
+            )
+            (alternate / ".gitconfig").write_text(settings)
+            (xdg / "git/config").write_text(settings)
+            with (other / ".git/config").open("a") as output:
+                output.write(settings)
+            fake = binary / "git"
+            fake.write_text(
+                '#!/bin/sh\n[ "$1" = push ] || exit 91\n'
+                'mirror=$("$REAL_GIT" config --get remote.origin.mirror)\n'
+                'ref=$("$REAL_GIT" config --get remote.origin.push)\n'
+                'printf "mirror=%s\\nref=%s\\n" "$mirror" "$ref" > "$FAKE_GIT_LOG"\n'
+            )
+            fake.chmod(0o755)
+            selectors = (
+                "HOME=" + shlex.quote(str(alternate)),
+                "XDG_CONFIG_HOME=" + shlex.quote(str(xdg)),
+                "GIT_CONFIG_GLOBAL=" + shlex.quote(str(alternate / ".gitconfig")),
+                "GIT_DIR=" + shlex.quote(str(other / ".git")),
+                "GIT_COMMON_DIR=" + shlex.quote(str(other / ".git")),
+                "GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=remote.origin.mirror GIT_CONFIG_VALUE_0=true "
+                "GIT_CONFIG_KEY_1=remote.origin.push GIT_CONFIG_VALUE_1=+HEAD:refs/heads/main",
+            )
+            for selector in selectors:
+                for prefix in ("", "LABEL=fixture "):
+                    command = prefix + selector + " git push origin"
+                    actual = subprocess.run(
+                        ["bash", "-c", command],
+                        cwd=clean,
+                        env=env,
+                        capture_output=True,
+                        timeout=5,
+                    )
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertEqual(
+                        (root / "calls").read_text(),
+                        "mirror=true\nref=+HEAD:refs/heads/main\n",
+                    )
+                    for hook in COMMIT_HOOKS:
+                        with self.subTest(
+                            selector=selector.split("=", 1)[0], prefix=prefix, hook=hook
+                        ):
+                            self.assertEqual(self.run_hook(hook, command), (2, 0))
+                    with self.subTest(
+                        selector=selector.split("=", 1)[0],
+                        prefix=prefix,
+                        hook="destructive",
+                    ):
+                        self.assertEqual(
+                            DestructiveHookTests().decision(command), "deny"
+                        )
+
+    def test_review38_push_selector_and_wrapper_pressure_matrix(self):
+        for name in (
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "GIT_CONFIG",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_COUNT",
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+            "GIT_NAMESPACE",
+        ):
+            for form in (
+                "{name}=/owned git push origin",
+                "LABEL=fixture {name}=/owned command git push origin",
+                "env {name}=/owned git push origin",
+                "{name}=/owned /usr/bin/git --no-pager push origin",
+                "{name}=/owned; git push origin",
+            ):
+                command = form.format(name=name)
+                for hook in COMMIT_HOOKS:
+                    with self.subTest(name=name, form=form, hook=hook):
+                        self.assertEqual(self.run_hook(hook, command), (2, 0))
+                with self.subTest(name=name, form=form, hook="destructive"):
+                    self.assertEqual(DestructiveHookTests().decision(command), "deny")
+
+    def test_review38_assignment_prefixed_push_keeps_prior_state_check(self):
+        for command in (
+            "touch owned; LABEL=fixture git push origin feature",
+            "git config remote.origin.mirror true; LANG=C git push origin feature",
+            "touch owned; LABEL=fixture command git push origin feature",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(DestructiveHookTests().decision(command), "deny")
+
+    def test_review38_inert_heredocs_and_ordinary_push_controls(self):
+        for command in (
+            "cat <<'EOF'\ngit push --force origin main\nEOF\n",
+            "cat <<'EOF'\nHOME=/alternate git push origin\nEOF\n",
+            "cat <<'EOF'\n\\\n| bash\ngit commit -am literal\nEOF\n",
+            "cat <<EOF\nordinary content\nEOF\n",
+            "printf '%s' 'HOME=/alternate git push origin'",
+            "git push origin feature",
+            "LABEL=fixture git push origin feature",
+            "LANG=C TZ=UTC command git push origin feature",
+            "echo healthy; LABEL=fixture git push origin feature",
+            "HOME=/owned git status",
+        ):
+            for hook in COMMIT_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertEqual(self.run_hook(hook, command), (0, 0))
+            with self.subTest(command=command, hook="destructive"):
+                self.assertEqual(DestructiveHookTests().decision(command), "allow")
+
+    def test_review37_find_grouped_boundaries_execute_guarded_git(self):
+        with tempfile.TemporaryDirectory(prefix="gravity37-find-") as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"], FAKE_GIT_LOG=str(log))
+            bash = shutil.which("bash")
+            pipe_shell = bash
+            if subprocess.run([bash, "-c", "true |& true"], capture_output=True).returncode:
+                pipe_shell = shutil.which("zsh")
+            for boundary in (";\n", "&&\n", "||\n", "|&"):
+                shell = pipe_shell if boundary == "|&" else bash
+                self.assertIsNotNone(shell, "A shell supporting the exercised boundary is required")
+                prefix = "find ./missing -print" if boundary == "||\n" else "find . -print"
+                for operation in ("commit -am broken", "push --force origin main"):
+                    command = prefix + boundary + "git " + operation
+                    log.write_text("")
+                    actual = subprocess.run([shell, "-c", command], cwd=root, env=env, capture_output=True, timeout=5)
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertIn(operation, log.read_text(), command)
+                    if operation.startswith("commit"):
+                        for hook in COMMIT_HOOKS:
+                            with self.subTest(boundary=boundary, hook=hook):
+                                # The unknown prelude may be refused; it must never skip
+                                # the compile gate and authorize an unchecked commit.
+                                self.assertNotEqual(self.run_hook(hook, command), (0, 0))
+                    else:
+                        with self.subTest(boundary=boundary, guard="push"):
+                            self.assertEqual(DestructiveHookTests().decision(command), "deny")
+            for literal in (";\n", "&&\n", "|&"):
+                (root / literal).mkdir()
+                command = "find " + shlex.quote(str(root / literal)) + " -print"
+                actual = subprocess.run([bash, "-c", command], cwd=root, env=env, capture_output=True, timeout=5)
+                self.assertEqual(actual.returncode, 0, actual.stderr)
+                for hook in COMMIT_HOOKS:
+                    self.assertEqual(self.run_hook(hook, command), (0, 0), command)
+                self.assertEqual(DestructiveHookTests().decision(command), "allow", command)
+
+    def test_review37_deferred_compound_declarations_execute_guarded_git(self):
+        with tempfile.TemporaryDirectory(prefix="gravity37-declare-") as temporary:
+            root = Path(temporary)
+            log = root / "calls"
+            fake = root / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"], FAKE_GIT_LOG=str(log))
+            for builtin in ("declare", "typeset", "local"):
+                for operation in ("commit -am broken", "push --force origin main"):
+                    body = builtin + " -a 'items=([$(git " + operation + "; printf 0)]=x)'"
+                    command = "f() { " + body + "; }; f" if builtin == "local" else body
+                    log.write_text("")
+                    actual = subprocess.run(["bash", "-c", command], cwd=root, env=env, capture_output=True, timeout=5)
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertIn(operation, log.read_text(), command)
+                    if operation.startswith("commit"):
+                        for hook in COMMIT_HOOKS:
+                            with self.subTest(builtin=builtin, hook=hook):
+                                self.assertEqual(self.run_hook(hook, command), (2, 0))
+                    else:
+                        with self.subTest(builtin=builtin, guard="push"):
+                            self.assertEqual(DestructiveHookTests().decision(command), "deny")
+                for assignment in ("items=(one two)", 'items=([0]=x [1]="git commit -am printed")'):
+                    body = builtin + " -a " + shlex.quote(assignment)
+                    command = "f() { " + body + "; }; f" if builtin == "local" else body
+                    for hook in COMMIT_HOOKS:
+                        self.assertEqual(self.run_hook(hook, command), (0, 0), command)
+                    self.assertEqual(DestructiveHookTests().decision(command), "allow", command)
+
+    def test_review36_quoted_find_paths_preserve_callback_inspection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(binary) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for path in (";", "&", "|", "&&"):
+                (root / path).mkdir()
+                for spelling in (
+                    shlex.quote(path),
+                    "\\" + path if len(path) == 1 else shlex.quote(path),
+                ):
+                    for operation in ("commit -am broken", "push --force origin main"):
+                        command = (
+                            "find . "
+                            + spelling
+                            + " -prune -exec git "
+                            + operation
+                            + " \\;"
+                        )
+                        with self.subTest(command=command):
+                            log.write_text("")
+                            result = subprocess.run(
+                                ["bash", "-c", command],
+                                cwd=root,
+                                env=env,
+                                capture_output=True,
+                                timeout=5,
+                            )
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            self.assertIn(operation, log.read_text())
+                            if operation.startswith("commit"):
+                                for hook in COMMIT_HOOKS:
+                                    self.assertEqual(
+                                        self.run_hook(hook, command), (2, 0)
+                                    )
+                            else:
+                                self.assertEqual(
+                                    DestructiveHookTests().decision(command), "deny"
+                                )
+                self.assertEqual(
+                    DestructiveHookTests().decision(
+                        "find . " + shlex.quote(path) + " -prune -print"
+                    ),
+                    "allow",
+                )
+
+    def test_review36_indirect_indexed_parameters_fail_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_GIT_LOG"\n')
+            fake.chmod(0o755)
+            env = dict(
+                os.environ,
+                PATH=str(binary) + os.pathsep + os.environ["PATH"],
+                FAKE_GIT_LOG=str(log),
+            )
+            for operation in ("commit -am broken", "push --force origin main"):
+                command = (
+                    "a=(0); ref='a[$(git "
+                    + operation
+                    + "; printf 0)]'; printf '%s' \"${!ref}\""
+                )
+                log.write_text("")
+                result = subprocess.run(
+                    ["bash", "-c", command],
+                    cwd=root,
+                    env=env,
+                    capture_output=True,
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(operation, log.read_text())
+                if operation.startswith("commit"):
+                    for hook in COMMIT_HOOKS:
+                        self.assertEqual(self.run_hook(hook, command), (2, 0))
+                else:
+                    self.assertEqual(DestructiveHookTests().decision(command), "deny")
+            for literal in ("printf '%s' '${!ref}'", r"printf '%s' \${!ref}"):
+                self.assertEqual(DestructiveHookTests().decision(literal), "allow")
+                for hook in COMMIT_HOOKS:
+                    self.assertEqual(self.run_hook(hook, literal), (0, 0))
+
     def test_review35_malformed_single_bracket_preserves_shell_commands(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1672,9 +2339,11 @@ class CommitGateTests(OwnedShellFixture):
                 prefix
                 + " printf '%s' 'git commit -am literal; git push --force origin main'"
             )
+            # Explicit sudo shell mode is a startup boundary even for printed data.
+            shell_mode = prefix == "sudo -s"
             for hook in COMMIT_HOOKS:
-                self.assertEqual(self.run_hook(hook, command), (0, 0))
-            self.assertEqual(DestructiveHookTests().decision(command), "allow")
+                self.assertEqual(self.run_hook(hook, command), (2, 0) if shell_mode else (0, 0))
+            self.assertEqual(DestructiveHookTests().decision(command), "deny" if shell_mode else "allow")
 
     def test_actual_nice_and_nohup_execute_guarded_child(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -3182,7 +3851,7 @@ class CommitGateTests(OwnedShellFixture):
                 and node.name
                 in {"shell_continuations", "git_executable", "shell_tokens"}
             ]
-            namespace = {"Path": Path, "shlex": shlex, "re": re}
+            namespace = {"Path": Path, "shlex": shlex, "re": re, "os": os}
             exec(
                 compile(
                     ast.Module(body=functions, type_ignores=[]),
@@ -3653,6 +4322,625 @@ class CarlLegacyPolicyTests(unittest.TestCase):
         self.assertIn("GLOBAL", loaded)
         self.assertNotIn("OPUS-4-7", loaded)
         self.assertFalse(domains["OPUS-4-7"]["state"])
+
+
+class Review41MalformedTests(unittest.TestCase):
+    def test_malformed_payloads_fail_closed(self):
+        for value in ([], None, {"tool_input": []},
+                      {"tool_input": {"command": None}},
+                      {"tool_input": {"command": 42}}):
+            for name in ("toolkit/configs/commit-gate.py",
+                         "toolkit/env/hooks/commit-gate.py",
+                         "toolkit/env/hooks/block-destructive.sh"):
+                with self.subTest(value=value, hook=name):
+                    command = ([sys.executable, str(ROOT / name)]
+                               if name.endswith(".py") else ["/bin/bash", str(ROOT / name)])
+                    result = subprocess.run(command, input=json.dumps(value), text=True,
+                                            capture_output=True, timeout=5)
+                    if name.endswith(".py"):
+                        self.assertEqual(result.returncode, 2)
+                    else:
+                        self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]
+                                         ["permissionDecision"], "deny")
+
+    def test_missing_destructive_runtime_fails_closed(self):
+        result = subprocess.run(
+            ["/bin/bash", str(ROOT / "toolkit/env/hooks/block-destructive.sh")],
+            input=json.dumps({"tool_input": {"command": "true"}}), text=True,
+            capture_output=True, env=dict(os.environ, PATH="/nonexistent"), timeout=5)
+        self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]
+                         ["permissionDecision"], "deny")
+
+
+G43_HOOKS = ('toolkit/configs/commit-gate.py', 'toolkit/env/hooks/commit-gate.py', 'toolkit/env/hooks/block-destructive.sh')
+G43_PATH = str(Path(sys.executable).parent) + os.pathsep + '/usr/bin:/bin'
+
+class Review43Guards(unittest.TestCase):
+    def guard(self, hook, payload, selectors=None):
+        with tempfile.TemporaryDirectory(prefix='gravity43-inspection-') as directory:
+            root = Path(directory)
+            data = dict(payload)
+            data['cwd'] = str(root)
+            env = {'PATH': G43_PATH, 'HOME': str(root), 'XDG_CONFIG_HOME': str(root / 'xdg'), 'PYTHONDONTWRITEBYTECODE': '1'}
+            env.update(selectors or {})
+            command = [sys.executable if hook.endswith('.py') else '/bin/bash', str(ROOT / hook)]
+            result = subprocess.run(command, input=json.dumps(data), text=True, capture_output=True, cwd=root, env=env, timeout=10)
+            denied = result.returncode == 2 if hook.endswith('.py') else bool(result.stdout) and json.loads(result.stdout)['hookSpecificOutput']['permissionDecision'] == 'deny'
+            return result, denied
+
+    def command(self, hook, command, selectors=None):
+        return self.guard(hook, {'tool_name': 'Bash', 'tool_input': {'command': command}}, selectors)
+
+    def test_literal_git_does_not_skip_trailing_deferred_inputs(self):
+        tails = ("PS4='$(true)'; true", "builtin export PS4='$(true)'; true",
+                 "printf -v PS4 %s '$(true)'; true", 'set -x; true', 'set -o xtrace; true')
+        for leading in ('git commit --dry-run', 'git --no-pager commit --dry-run'):
+            for boundary in ('; ', '\n', ' && '):
+                for tail in tails:
+                    for hook in G43_HOOKS:
+                        with self.subTest(leading=leading, boundary=repr(boundary), tail=tail, hook=hook):
+                            self.assertTrue(self.command(hook, leading + boundary + tail)[1])
+
+    def test_alias_and_expansion_state_cannot_hide_execution(self):
+        programs = ("shopt -s expand_aliases\nalias hello=true\nhello",
+                    "shopt -sq expand_aliases\nalias hello='true'\nhello",
+                    "builtin shopt -s expand_aliases\nbuiltin alias hello=true\nhello",
+                    'alias hello=true\nhello', 'git commit --dry-run; alias hello=true\nhello',
+                    'git commit --dry-run; shopt -s expand_aliases\nalias hello=true\nhello',
+                    "bash -c 'shopt -s expand_aliases; alias hello=true; hello'", 'shopt -s expand_aliases')
+        for command in programs:
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertTrue(self.command(hook, command)[1])
+
+    def test_missing_bash_command_fields_fail_closed(self):
+        for payload in ({'tool_name': 'Bash'}, {'tool_name': 'Bash', 'tool_input': {}},
+                        {'tool_name': 'Bash', 'tool_input': None}, {}, {'tool_input': {}}):
+            for hook in G43_HOOKS:
+                with self.subTest(payload=payload, hook=hook):
+                    self.assertTrue(self.guard(hook, payload)[1])
+
+    def test_selector_diagnostics_name_keys_without_values(self):
+        for variable in ('PS4', 'BASH_ENV', 'ENV', 'ZDOTDIR', 'SHELLOPTS', 'BASHOPTS'):
+            value = 'gravity43-private-value-' + variable
+            if variable == 'PS4':
+                value += '$(true)'
+            for hook in G43_HOOKS:
+                with self.subTest(variable=variable, hook=hook):
+                    result, denied = self.command(hook, variable + '=' + shlex.quote(value) + '; true')
+                    self.assertTrue(denied)
+                    output = result.stdout + result.stderr
+                    self.assertIn(variable, output)
+                    self.assertNotIn(value, output)
+        for hook in G43_HOOKS:
+            with self.subTest(variable='inherited-ZDOTDIR', hook=hook):
+                value = '/private/gravity43-private-selector-value'
+                result, denied = self.command(hook, 'true', {'ZDOTDIR': value})
+                self.assertTrue(denied)
+                self.assertIn('ZDOTDIR', result.stdout + result.stderr)
+                self.assertNotIn(value, result.stdout + result.stderr)
+
+    def test_inert_alias_data_queries_and_ordinary_git_remain_allowed(self):
+        commands = ("printf '%s' 'shopt -s expand_aliases; alias hello=true'",
+                    'alias', 'alias -p', 'alias hello', 'unalias hello', 'shopt -q expand_aliases',
+                    'shopt -p expand_aliases', 'shopt -u expand_aliases', 'shopt -s nullglob',
+                    "PS4='+ '; true", 'git commit --dry-run',
+                    "git commit --dry-run; printf '%s' 'PS4=$(true)'",
+                    "git commit --dry-run; printf '%s' 'alias hello=true'")
+        for command in commands:
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+        for payload in ({'tool_name': 'Bash', 'tool_input': {'command': ''}},
+                        {'tool_name': 'Read', 'tool_input': {'file_path': 'example.txt'}},
+                        {'tool_input': {'command': 'true'}}):
+            for hook in G43_HOOKS:
+                with self.subTest(payload=payload, hook=hook):
+                    self.assertFalse(self.guard(hook, payload)[1])
+
+    def test_three_parser_copies_remain_identical(self):
+        sources = [(ROOT / hook).read_text() for hook in G43_HOOKS]
+        sources[-1] = sources[-1].split("python3 -c '\n", 1)[1].rsplit("'", 1)[0]
+        trees = []
+        for source in sources:
+            trees.append([ast.dump(n, include_attributes=False) for n in ast.parse(source).body
+                          if isinstance(n, ast.FunctionDef) and n.name in ('shell_continuations', 'git_executable', 'shell_tokens')])
+        self.assertEqual(trees[0], trees[1])
+        self.assertEqual(trees[0], trees[2])
+
+
+class Review45Guards(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+
+    def test_redirected_queries_cannot_skip_trailing_deferred_state(self):
+        for leading in ('git >/dev/null status', 'git 2>/dev/null status', 'git </dev/null status',
+                        'git -C . >/dev/null status', 'git --no-pager >/dev/null status'):
+            for boundary in ('; ', '\n', ' && '):
+                command = leading + boundary + "PS4='$(true)'; true"
+                for hook in G43_HOOKS:
+                    with self.subTest(leading=leading, boundary=repr(boundary), hook=hook):
+                        self.assertTrue(self.command(hook, command)[1])
+
+    def test_uncertain_execution_paths_never_accept_later_state(self):
+        prefixes = ('echo "$(git status; git commit --dry-run)"', 'env -u',
+                    'env -u "$UNRESOLVED" true', 'items=(one', '$UNRESOLVED',
+                    'env --unknown-option true', 'function', "eval ':'", 'source missing-file',
+                    'bash -c', 'bash -c "$UNRESOLVED"', 'bash missing-script',
+                    'git "$UNRESOLVED"', 'git >/dev/null status', 'git -C "$UNRESOLVED" status')
+        for prefix in prefixes:
+            for hook in G43_HOOKS:
+                with self.subTest(prefix=prefix, hook=hook):
+                    self.assertTrue(self.command(hook, prefix + "; PS4='$(true)'; true")[1])
+
+    def test_login_interactive_and_startup_options_refuse(self):
+        with tempfile.TemporaryDirectory(prefix='gravity45-startup-') as directory:
+            home = Path(directory); marker = home / 'startup-ran'
+            for filename in ('.bash_profile', '.bashrc', '.profile', '.zprofile', '.zshrc', 'customrc'):
+                (home / filename).write_text('printf startup > ' + shlex.quote(str(marker)) + '\n')
+            forms = ('-lc', '-cl', '-ic', '-ci', '-l -c', '-i -c', '--login -c',
+                     '-o login -c', '-o interactive -c', '-O expand_aliases -c',
+                     '--rcfile ' + shlex.quote(str(home / 'customrc')) + ' -c',
+                     '--init-file ' + shlex.quote(str(home / 'customrc')) + ' -c',
+                     '--norc -ic', '--noprofile -lc')
+            for shell in ('bash', 'sh', 'zsh', 'dash', 'ksh'):
+                for flags in forms:
+                    for hook in G43_HOOKS:
+                        with self.subTest(shell=shell, flags=flags, hook=hook):
+                            self.assertTrue(self.command(hook, shell + ' ' + flags + " ':'", {'HOME': str(home)})[1])
+                            self.assertFalse(marker.exists())
+
+    def test_wrapped_startup_and_login_argv0_refuse(self):
+        for command in ("command bash -lc ':'", "env bash -ic ':'", "exec bash --login -c ':'",
+                        "exec -a -bash bash -c ':'", "command exec -a -bash bash -c ':'",
+                        "git status; bash -lc ':'", "git commit --dry-run; bash -ic ':'"):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertTrue(self.command(hook, command)[1])
+
+    def test_ordinary_queries_and_literal_nonstartup_shells_stay_allowed(self):
+        for command in ('git status', 'git --version', 'git --no-pager status',
+                        "git -C 'literal>path' status", "git status 'literal>path'",
+                        "printf '%s' 'bash -lc :; PS4=$(true)'", "echo 'source ./profile; eval true'",
+                        "bash -c ':'", "env bash -c ':'", "command bash -c ':'",
+                        "bash -ec ':'", "bash -e -u -c ':'", "bash --noprofile --norc -c ':'",
+                        "bash -c ':' --login", "bash -c ':' -i", "exec -a diagnostic-name bash -c ':'",
+                        "sh -c ':'", "zsh -c ':'", "dash -c ':'", "ksh -c ':'"):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+
+
+class Review45LoginWrapper(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+
+    def test_exec_login_option_cannot_load_startup_files(self):
+        for command in ("exec -l bash -c ':'", "exec -c -l bash -c ':'", "exec -l -c sh -c ':'",
+                        "command exec -l bash -c ':'", "builtin exec -l bash -c ':'",
+                        "env bash -c \"exec -l bash -c ':'\""):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertTrue(self.command(hook, command)[1])
+        for command in ("exec -c bash -c ':'", "exec -a diagnostic-name bash -c ':'",
+                        "printf '%s' \"exec -l bash -c ':'\""):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+
+
+class Review47SudoStartup(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+
+    def test_login_and_shell_modes_refuse_before_child_or_interactive_start(self):
+        forms = ('-i', '--login', '-s', '--shell', '-ni', '-in', '-nHi', '-Eis',
+                 '-sn', '-ns', '-u root -i', '-iu root', '-nsi', '--log', '--shel')
+        for flags in forms:
+            for child in ('', ' true'):
+                for hook in G43_HOOKS:
+                    with self.subTest(flags=flags, child=bool(child), hook=hook):
+                        self.assertTrue(self.command(hook, 'sudo ' + flags + child)[1])
+        for command in ('command sudo -i true', 'env sudo --login true',
+                        'git status; sudo -i true', 'sudo -n --shell true'):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    self.assertTrue(self.command(hook, command)[1])
+
+    def test_nonlogin_controls_keep_option_operands_and_child_data(self):
+        for command in ('sudo true', 'sudo -n true', 'sudo -H true',
+                        'sudo -u root true', 'sudo -ui true', 'sudo -p%s true',
+                        'sudo --prompt=-i true', 'sudo -- true -i', 'sudo echo -i',
+                        'sudo -nEuisi true', "printf '%s' 'sudo -i true'",
+                        'command sudo -n true'):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+
+class Review47SudoOptionBoundary(unittest.TestCase):
+    guard=Review43Guards.guard
+    command=Review43Guards.command
+    def test_unresolved_options_do_not_hide_later_shell_modes(self):
+        for command in ('sudo --preserve-env=PATH -i true', 'sudo -A -i true',
+                        'sudo --unknown-option -i true', 'sudo --preserve-env=PATH -s'):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command,hook=hook):
+                    self.assertTrue(self.command(hook,command)[1])
+        for command in ('sudo -A true', 'sudo -nAH true'):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command,hook=hook):
+                    result,denied=self.command(hook,command)
+                    self.assertFalse(denied,result.stdout+result.stderr)
+                    self.assertEqual(result.returncode,0)
+
+
+class Review48(unittest.TestCase):
+    guard=Review43Guards.guard
+    command=Review43Guards.command
+    prefix="a=(0); expression='a[$(git commit --dry-run; printf 0)]'; "
+
+    def test_existing_integer_attributes_apply_to_declaration_writers(self):
+        for declaration in ('declare -i number; ', 'typeset -i number; '):
+            for builtin in ('export','readonly','declare','typeset'):
+                for assignment in ('number=expression','number+=expression',
+                                   "'number[0]=expression'", "'number=(expression)'"):
+                    command=self.prefix+declaration+builtin+' '+assignment
+                    for hook in G43_HOOKS:
+                        with self.subTest(declaration=declaration,builtin=builtin,assignment=assignment,hook=hook):
+                            self.assertTrue(self.command(hook,command)[1])
+        for wrapper in ('builtin ', 'command ', 'command builtin '):
+            for hook in G43_HOOKS:
+                with self.subTest(wrapper=wrapper,hook=hook):
+                    self.assertTrue(self.command(hook,self.prefix+'declare -i number; '+wrapper+'export number=expression')[1])
+
+    def test_trap_writers_cannot_depend_on_current_or_future_integer_state(self):
+        callbacks=('number=expression', 'number+=expression', 'number[0]=expression',
+                   'export number=expression', 'readonly number=expression',
+                   'declare number=expression', 'typeset number=expression',
+                   'printf -v number %s expression', 'read number <<< expression')
+        for callback in callbacks:
+            for declaration_first in (True,False):
+                statement='trap '+shlex.quote(callback)+' EXIT; '
+                program=('declare -i number; '+statement if declaration_first else statement+'declare -i number; ')
+                for hook in G43_HOOKS:
+                    with self.subTest(callback=callback,declaration_first=declaration_first,hook=hook):
+                        self.assertTrue(self.command(hook,self.prefix+program)[1])
+        for callback in ('number=1', 'printf -v number %s 1', 'declare label=text',
+                         'mapfile number', 'readarray number'):
+            for hook in G43_HOOKS:
+                with self.subTest(deferred_unknown_state=callback,hook=hook):
+                    self.assertTrue(self.command(hook,'trap '+shlex.quote(callback)+' EXIT')[1])
+
+    def test_actual_builtin_and_trap_arithmetic_uses_only_owned_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix='gravity48-owned-') as directory:
+            root=Path(directory);binary=root/'bin';binary.mkdir();log=root/'calls'
+            fake=binary/'git';fake.write_text('#!/bin/sh\nprintf "%s\n" "$*" >> "$OWNED_GIT_LOG"\n');fake.chmod(0o755)
+            environment={'PATH':str(binary)+os.pathsep+'/usr/bin:/bin','HOME':str(root),'OWNED_GIT_LOG':str(log)}
+            tails=["declare -i number; "+builtin+' number=expression' for builtin in ('export','readonly','declare','typeset')]
+            tails += ["declare -i number; export 'number=(expression)'", "declare -i number; trap 'number=expression' EXIT",
+                      "trap 'number=expression' EXIT; declare -i number", "trap 'export number=expression' EXIT; declare -i number"]
+            for tail in tails:
+                with self.subTest(tail=tail):
+                    log.write_text('')
+                    result=subprocess.run(['/bin/bash','-c',self.prefix+tail],cwd=root,env=environment,capture_output=True,text=True,timeout=3)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertIn('commit --dry-run',log.read_text())
+                    for hook in G43_HOOKS:
+                        with self.subTest(hook=hook):
+                            self.assertTrue(self.command(hook,self.prefix+tail)[1])
+
+    def test_literal_integer_values_and_print_only_callbacks_remain_allowed(self):
+        controls=["declare -i number; "+builtin+' number=3' for builtin in ('export','readonly','declare','typeset')]
+        controls += ['declare -i number; export number+=3', "declare -i number; export 'number[0]=3'",
+                     "declare -i number; export 'number=(1 2)'", 'declare -i number; export number',
+                     'export label=expression', 'declare label=expression', 'readonly label=expression',
+                     'declare -a values=(one two)', "trap 'printf %s hello' EXIT; declare -i number",
+                     "trap 'echo number=expression' EXIT; declare -i number", "trap 'true' EXIT", 'trap -p', 'trap - EXIT']
+        for command in controls:
+            for hook in G43_HOOKS:
+                with self.subTest(command=command,hook=hook):
+                    result,denied=self.command(hook,command)
+                    self.assertFalse(denied,result.stdout+result.stderr)
+                    self.assertEqual(result.returncode,0)
+
+
+
+class Review48NestedCallbacks(unittest.TestCase):
+    guard=Review43Guards.guard
+    command=Review43Guards.command
+    prefix=Review48.prefix
+    def test_callback_substitution_and_parameter_writes_keep_deferred_state(self):
+        for callback in ('printf %s "$(number=expression)"', 'echo `export number=expression`',
+                         'cat <(number=expression)', ': ${number:=expression}',
+                         'echo "$(printf -v number %s expression)"'):
+            for first in (True,False):
+                trap='trap '+shlex.quote(callback)+' EXIT; '
+                command=self.prefix+('declare -i number; '+trap if first else trap+'declare -i number; ')
+                for hook in G43_HOOKS:
+                    with self.subTest(callback=callback,declaration_first=first,hook=hook):
+                        self.assertTrue(self.command(hook,command)[1])
+        for callback in ('printf %s "$(printf %s hello)"', 'echo "$(pwd)"', 'echo "$number"'):
+            for hook in G43_HOOKS:
+                with self.subTest(read_only_callback=callback,hook=hook):
+                    result,denied=self.command(hook,'trap '+shlex.quote(callback)+' EXIT; declare -i number')[0:2]
+                    self.assertFalse(denied,result.stdout+result.stderr)
+                    self.assertEqual(result.returncode,0)
+    def test_actual_nested_callback_runs_only_owned_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix='gravity48-nested-owned-') as directory:
+            root=Path(directory);binary=root/'bin';binary.mkdir();log=root/'calls';fake=binary/'git'
+            fake.write_text('#!/bin/sh\nprintf "%s\n" "$*" >> "$OWNED_GIT_LOG"\n');fake.chmod(0o755)
+            env={'PATH':str(binary)+os.pathsep+'/usr/bin:/bin','HOME':str(root),'OWNED_GIT_LOG':str(log)}
+            for callback in ('printf %s "$(number=expression)"', ': ${number:=expression}'):
+                with self.subTest(callback=callback):
+                    log.write_text('');command=self.prefix+'trap '+shlex.quote(callback)+' EXIT; declare -i number'
+                    result=subprocess.run(['/bin/bash','-c',command],cwd=root,env=env,capture_output=True,text=True,timeout=3)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertIn('commit --dry-run',log.read_text())
+                    for hook in G43_HOOKS:
+                        with self.subTest(hook=hook):
+                            self.assertTrue(self.command(hook,command)[1])
+
+
+class Review49InheritedSubstitutions(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+    prefix = Review48.prefix
+
+    def test_writes_inside_substitutions_cannot_assume_fresh_attributes(self):
+        tails = (
+            'printf %s "$(number=expression)"',
+            "echo `number=expression`",
+            "cat <(number=expression)",
+            'printf %s "$(export number=expression)"',
+            'echo "$(printf -v number %s expression)"',
+            'echo "$(echo "$(number=expression)")"',
+        )
+        for tail in tails:
+            for hook in G43_HOOKS:
+                with self.subTest(tail=tail, hook=hook):
+                    self.assertTrue(
+                        self.command(hook, self.prefix + "declare -i number; " + tail)[
+                            1
+                        ]
+                    )
+
+    def test_parameter_writes_outside_callbacks_cannot_assume_string_attributes(self):
+        for tail in (
+            ': "${number:=expression}"',
+            ': "${number=expression}"',
+            'echo "${unused:-${number:=expression}}"',
+            'echo "$(echo "${number:=expression}")"',
+        ):
+            for hook in G43_HOOKS:
+                with self.subTest(tail=tail, hook=hook):
+                    self.assertTrue(
+                        self.command(hook, self.prefix + "declare -i number; " + tail)[
+                            1
+                        ]
+                    )
+
+    def test_owned_runtime_confirms_arithmetic_without_real_git(self):
+        with tempfile.TemporaryDirectory(prefix="gravity49-owned-") as directory:
+            root = Path(directory)
+            binary = root / "bin"
+            binary.mkdir()
+            log = root / "calls"
+            fake = binary / "git"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$OWNED_GIT_LOG"\n')
+            fake.chmod(0o755)
+            environment = {
+                "PATH": str(binary) + os.pathsep + "/usr/bin:/bin",
+                "HOME": str(root),
+                "OWNED_GIT_LOG": str(log),
+            }
+            for tail in (
+                'printf %s "$(number=expression)"',
+                ': "${number:=expression}"',
+            ):
+                with self.subTest(tail=tail):
+                    log.write_text("")
+                    command = self.prefix + "declare -i number; " + tail
+                    result = subprocess.run(
+                        ["/bin/bash", "-c", command],
+                        cwd=root,
+                        env=environment,
+                        capture_output=True,
+                        text=True,
+                        timeout=3,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("commit --dry-run", log.read_text())
+                    for hook in G43_HOOKS:
+                        self.assertTrue(self.command(hook, command)[1])
+
+    def test_literal_printing_and_read_only_substitutions_stay_allowed(self):
+        for command in (
+            'printf %s "$(printf %s hello)"',
+            "echo `pwd`",
+            "printf %s '${number:=expression}'",
+            ': "${label:=3}"',
+            'declare -i number; echo "$number"',
+        ):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+
+
+
+class Review50DeferredFunctionsAndLoops(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+    prefix = Review48.prefix
+
+    def test_deferred_functions_cannot_assume_declaration_time_attributes(self):
+        for definition in ('function fill { number=expression; }; ', 'fill() { number=expression; }; ', 'function fill() { export number=expression; }; '):
+            for hook in G43_HOOKS:
+                with self.subTest(definition=definition, hook=hook):
+                    self.assertTrue(self.command(hook, self.prefix + definition + 'declare -i number; fill')[1])
+
+    def test_implicit_loop_bindings_are_integer_writes(self):
+        for loop in ('for number in expression; do :; done', 'select number in expression; do break; done', 'for number; do :; done'):
+            for hook in G43_HOOKS:
+                with self.subTest(loop=loop, hook=hook):
+                    self.assertTrue(self.command(hook, self.prefix + 'declare -i number; ' + loop)[1])
+        for hook in G43_HOOKS:
+            self.assertTrue(self.command(hook, 'fill() { for number in expression; do :; done; }; declare -i number; fill')[1])
+
+    def test_owned_runtime_functions_and_loops_use_only_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix='gravity50-owned-') as directory:
+            root = Path(directory); binary = root / 'bin'; binary.mkdir(); log = root / 'calls'
+            fake = binary / 'git'; fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$OWNED_GIT_LOG"\n'); fake.chmod(0o755)
+            environment = {'PATH': str(binary) + os.pathsep + '/usr/bin:/bin', 'HOME': str(root), 'OWNED_GIT_LOG': str(log)}
+            for tail in ('function fill { number=expression; }; declare -i number; fill', 'fill() { number=expression; }; declare -i number; fill', 'declare -i number; for number in expression; do :; done', 'declare -i number; select number in expression; do break; done'):
+                log.write_text(''); command = self.prefix + tail
+                result = subprocess.run(['/bin/bash', '-c', command], input='1\n', cwd=root, env=environment, capture_output=True, text=True, timeout=3)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('commit --dry-run', log.read_text())
+                for hook in G43_HOOKS:
+                    self.assertTrue(self.command(hook, command)[1])
+
+    def test_read_only_functions_and_plain_string_loops_stay_allowed(self):
+        for command in ('function greet { printf %s hello; }; greet', 'greet() { printf %s hello; }; greet; label=text', 'for label in one two; do printf %s "$label"; done', 'select label in one two; do break; done', 'declare -i number; for number in 1 2; do :; done'):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+    def test_explicit_local_array_does_not_inherit_global_integer_arithmetic(self):
+        with tempfile.TemporaryDirectory(prefix="gravity50-local-array-") as directory:
+            root = Path(directory); binary = root / "bin"; binary.mkdir(); log = root / "calls"
+            fake = binary / "git"; fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$OWNED_GIT_LOG"\n'); fake.chmod(0o755)
+            environment = {"PATH": str(binary) + os.pathsep + "/usr/bin:/bin", "HOME": str(root), "OWNED_GIT_LOG": str(log)}
+            command = self.prefix + "one=expression; declare -i items; f() { local -a 'items=(one two)'; printf '%s\\n' \"${items[@]}\"; }; f"
+            result = subprocess.run(["/bin/bash", "-c", command], cwd=root, env=environment, capture_output=True, text=True, timeout=3)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "one\ntwo\n")
+            self.assertFalse(log.exists(), "ordinary local array data must not run fake Git")
+            for hook in G43_HOOKS:
+                result, denied = self.command(hook, command)
+                self.assertFalse(denied, result.stdout + result.stderr)
+
+
+
+class Review51FunctionFormsAndLoopSelectors(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+    prefix = Review48.prefix
+
+    def test_nonbrace_function_bodies_cannot_hide_future_integer_writes(self):
+        for definition in ('fill() ( number=expression; ); ', 'function fill() ( number=expression; ); ', 'fill() if true; then number=expression; fi; '):
+            for hook in G43_HOOKS:
+                with self.subTest(definition=definition, hook=hook):
+                    self.assertTrue(self.command(hook, self.prefix + definition + 'declare -i number; fill')[1])
+
+    def test_loop_bindings_cannot_select_deferred_shell_code(self):
+        for variable in ('BASH_ENV', 'ENV', 'PS4', 'ZDOTDIR', 'SHELLOPTS', 'BASHOPTS'):
+            for loop in ('for ' + variable + ' in /tmp/unknown-startup; do :; done', 'select ' + variable + ' in /tmp/unknown-startup; do break; done', 'for ' + variable + '; do :; done'):
+                for hook in G43_HOOKS:
+                    with self.subTest(variable=variable, loop=loop, hook=hook):
+                        self.assertTrue(self.command(hook, 'export ' + variable + '=; ' + loop)[1])
+
+    def test_owned_subshell_function_and_exported_loop_use_only_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix='gravity51-owned-') as directory:
+            root = Path(directory); binary = root / 'bin'; binary.mkdir(); log = root / 'calls'
+            fake = binary / 'git'; fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$OWNED_GIT_LOG"\n'); fake.chmod(0o755)
+            startup = root / 'startup.sh'; startup.write_text('git commit --dry-run\n')
+            environment = {'PATH': str(binary) + os.pathsep + '/usr/bin:/bin', 'HOME': str(root), 'OWNED_GIT_LOG': str(log)}
+            for command in (self.prefix + 'fill() ( number=expression; ); declare -i number; fill', 'export BASH_ENV=; for BASH_ENV in ' + shlex.quote(str(startup)) + '; do /bin/bash -c ":"; done'):
+                log.write_text(''); result = subprocess.run(['/bin/bash', '-c', command], cwd=root, env=environment, capture_output=True, text=True, timeout=3)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('commit --dry-run', log.read_text())
+                for hook in G43_HOOKS:
+                    self.assertTrue(self.command(hook, command)[1])
+    def test_linebroken_and_spaced_signatures_keep_deferred_body_state(self):
+        for signature in ('fill()\n\n', 'fill( ) ', 'function fill\n\n'):
+            for hook in G43_HOOKS:
+                with self.subTest(signature=signature, hook=hook):
+                    self.assertTrue(self.command(hook, self.prefix + signature + '{ number=expression; }; declare -i number; fill')[1])
+                    result, denied = self.command(hook, signature + '{ printf %s hello; }; fill')
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+
+
+class Review52BuiltinIntegersAndRepeatedLoops(unittest.TestCase):
+    guard = Review43Guards.guard
+    command = Review43Guards.command
+    prefix = Review48.prefix
+
+    def test_shell_initialized_integer_writes_need_literal_arithmetic(self):
+        for name in ('OPTIND', 'RANDOM', 'SECONDS', 'LINENO', 'HISTCMD'):
+            for tail in (name + '=expression', 'export ' + name + '=expression', 'readonly ' + name + '=expression'):
+                for hook in G43_HOOKS:
+                    with self.subTest(name=name, tail=tail, hook=hook):
+                        self.assertTrue(self.command(hook, self.prefix + tail)[1])
+
+    def test_attribute_changes_inside_repeated_loops_remain_unproved(self):
+        for loop in ('for number in 0 expression; do declare -i number; done',
+                     'select number in 0 expression; do typeset -i number; done',
+                     'while true; do number=expression; declare -i number; break; done',
+                     'until false; do number=expression; declare -i number; break; done'):
+            for hook in G43_HOOKS:
+                with self.subTest(loop=loop, hook=hook):
+                    self.assertTrue(self.command(hook, self.prefix + loop)[1])
+
+    def test_owned_builtin_and_second_loop_iteration_use_only_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix='gravity52-owned-') as directory:
+            root = Path(directory); binary = root / 'bin'; binary.mkdir(); log = root / 'calls'
+            fake = binary / 'git'; fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$OWNED_GIT_LOG"\n'); fake.chmod(0o755)
+            environment = {'PATH': str(binary) + os.pathsep + '/usr/bin:/bin', 'HOME': str(root), 'OWNED_GIT_LOG': str(log)}
+            for tail in ('OPTIND=expression', 'for number in 0 expression; do declare -i number; done'):
+                log.write_text(''); command = self.prefix + tail
+                result = subprocess.run(['/bin/bash', '-c', command], cwd=root, env=environment, capture_output=True, text=True, timeout=3)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('commit --dry-run', log.read_text())
+                for hook in G43_HOOKS:
+                    self.assertTrue(self.command(hook, command)[1])
+
+    def test_literal_builtin_values_and_plain_loops_stay_supported(self):
+        for command in ('OPTIND=1', 'RANDOM=42', 'SECONDS=0', 'for label in one two; do printf %s "$label"; done', 'while false; do printf %s hello; done', 'for label in one two; do :; done; declare -i number=1'):
+            for hook in G43_HOOKS:
+                with self.subTest(command=command, hook=hook):
+                    result, denied = self.command(hook, command)
+                    self.assertFalse(denied, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0)
+
+
+class Review53Getopts(unittest.TestCase):
+    guard=Review43Guards.guard
+    command=Review43Guards.command
+    def test_getopts_cannot_mutate_deferred_execution_selectors(self):
+        for variable in ['BASH_ENV','ENV','PS4','SHELLOPTS','BASHOPTS','ZDOTDIR']:
+            for wrapper in ['', 'builtin ', 'command builtin ']:
+                program='OPTIND=1; export '+variable+'=; '+wrapper+'getopts a '+variable+" -a; bash -c ':'"
+                for hook in G43_HOOKS:
+                    with self.subTest(variable=variable,wrapper=wrapper,hook=hook):self.assertTrue(self.command(hook,program)[1])
+    def test_implicit_getopts_writes_stay_unproved_in_integer_and_deferred_contexts(self):
+        for program in ['declare -i option; getopts a option -a', 'declare -i OPTARG; getopts a: option -a expression', 'function parse { getopts a option -a; }; parse', 'getopts a names[index] -a', 'getopts a "$destination" -a']:
+            for hook in G43_HOOKS:
+                with self.subTest(program=program,hook=hook):self.assertTrue(self.command(hook,program)[1])
+    def test_owned_startup_file_runs_only_fake_git(self):
+        with tempfile.TemporaryDirectory(prefix='gravity53-owned-') as d:
+            root=Path(d);binary=root/'bin';binary.mkdir();fake=binary/'git';log=root/'calls'
+            fake.write_text('#!/bin/sh\nprintf "%s\n" "$*" >> "$OWNED_GIT_LOG"\n');fake.chmod(0o755)
+            (root/'a').write_text('git commit --dry-run\n')
+            program="OPTIND=1; export BASH_ENV=; getopts a BASH_ENV -a; bash -c ':'"
+            result=subprocess.run(['/bin/bash','-c',program],cwd=root,env={'HOME':str(root),'PATH':str(binary)+os.pathsep+'/usr/bin:/bin','OWNED_GIT_LOG':str(log)},capture_output=True,text=True,timeout=3)
+            self.assertEqual(result.returncode,0,result.stderr);self.assertIn('commit --dry-run',log.read_text())
+            for hook in G43_HOOKS:self.assertTrue(self.command(hook,program)[1])
+    def test_quoted_getopts_data_and_command_lookup_remain_safe(self):
+        for program in ["printf '%s' 'getopts a BASH_ENV -a'; true", 'command -v getopts', 'true']:
+            for hook in G43_HOOKS:
+                with self.subTest(program=program,hook=hook):self.assertFalse(self.command(hook,program)[1])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,10 @@
 #!/bin/bash
 # Claude PreToolUse Bash hook. Inspect literal commands; do not execute them.
+inspection_failed() {
+  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"BLOCKED: hook inspection unavailable"}}'
+  exit 0
+}
+trap inspection_failed ERR
 python3 -c '
 import json
 import os
@@ -9,9 +14,22 @@ import shlex
 import sys
 
 try:
-    command = json.load(sys.stdin).get("tool_input", {}).get("command", "")
-except (ValueError, TypeError):
-    sys.exit(0)
+    payload = json.load(sys.stdin)
+    if not isinstance(payload, dict):
+        raise TypeError("payload must be an object")
+    tool_name = payload.get("tool_name", "Bash")
+    if not isinstance(tool_name, str):
+        raise TypeError("tool name must be text")
+    if tool_name != "Bash":
+        sys.exit(0)
+    tool = payload["tool_input"]
+    if not isinstance(tool, dict):
+        raise TypeError("tool input must be an object")
+    command = tool["command"]
+    if not isinstance(command, str):
+        raise TypeError("command must be text")
+except (ValueError, TypeError, AttributeError, KeyError):
+    sys.exit(1)
 
 def deny(reason):
     print(json.dumps({"hookSpecificOutput": {
@@ -75,6 +93,24 @@ def git_executable(word):
 def shell_tokens(command):
     """Keep literal punctuation distinct from shell operators after decoding."""
 
+    deferred_names = {"PS4", "BASH_ENV", "ENV", "ZDOTDIR", "SHELLOPTS", "BASHOPTS"}
+
+    def check_deferred_input(variable, value="", unresolved=False):
+        # These values become shell code or select code after ordinary parsing.
+        # Quoting an assignment protects it now, not when the shell uses it.
+        if variable not in deferred_names:
+            return
+        if variable == "PS4":
+            uncertain = unresolved or any(char in value for char in ("$", "`", "\ue002"))
+        else:
+            uncertain = unresolved or bool(value) or variable == "ZDOTDIR"
+        if uncertain:
+            raise ValueError(f"unresolved deferred shell execution input cannot be inspected ({variable})")
+
+    for variable in deferred_names:
+        if variable in os.environ:
+            check_deferred_input(variable, os.environ[variable])
+
     def literal_test_bracket(text, position):
         """Recognize standalone Bash test syntax, retaining glob uncertainty."""
         start = position - 1 if position and text[position - 1] == "[" else position
@@ -85,10 +121,13 @@ def shell_tokens(command):
     def literal_arithmetic(expression):
         # Numeric literals and one simple assignment have no indirect variable
         # or array lookup whose runtime value could execute substitutions.
-        value = re.sub(r"^\s*[A-Za-z_][A-Za-z0-9_]*\s*=(?!=)", "", expression, count=1)
+        assignment = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)", expression)
+        if assignment:
+            check_deferred_input(assignment.group(1), unresolved=True)
+        value = expression[assignment.end() :] if assignment else expression
         return bool(value.strip()) and bool(re.fullmatch(r"[0-9 \t+*/%()<>|&^!~=.-]+", value))
 
-    def inspect_substitutions(text, depth=0, quote_sensitive=True):
+    def inspect_substitutions(text, depth=0, quote_sensitive=True, deferred_state=False):
         """Recursively inspect executable substitutions, retaining word expansion."""
         if depth > 16:
             raise ValueError("shell nesting exceeds inspection limit")
@@ -111,6 +150,15 @@ def shell_tokens(command):
             if text.startswith("${", position):
                 end = text.find("}", position + 2)
                 reference = text[position + 2 : end] if end >= 0 else ""
+                if reference.startswith("!"):
+                    raise ValueError("unresolved indirect parameter reference cannot be inspected")
+                assignment = re.match(
+                    r"^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?:?=", reference
+                )
+                if assignment:
+                    if deferred_state or not literal_arithmetic(reference[assignment.end():]):
+                        raise ValueError("unproved parameter assignment arithmetic cannot be inspected")
+                    check_deferred_input(assignment.group(1), unresolved=True)
                 indexed = re.match(r"^[A-Za-z_][A-Za-z0-9_]*\[(.*)\]", reference)
                 if (
                     indexed
@@ -162,7 +210,7 @@ def shell_tokens(command):
                 if ending >= len(text):
                     raise ValueError("unterminated arithmetic expansion")
                 _, guarded = inspect_substitutions(
-                    text[beginning : ending - 1], depth + 1, quote_sensitive=False
+                    text[beginning : ending - 1], depth + 1, quote_sensitive=False, deferred_state=deferred_state
                 )
                 if guarded:
                     raise ValueError(
@@ -204,7 +252,10 @@ def shell_tokens(command):
                     ending += 1
                 if ending >= len(text):
                     raise ValueError("unterminated executable shell substitution")
-                if possible_guarded(text[beginning:ending], depth + 1):
+                # Substitutions inherit shell attributes, but this pass precedes
+                # outer declaration collection. Treat writes as unproved rather
+                # than assuming fresh string variables in the nested shell.
+                if possible_guarded(text[beginning:ending], depth + 1, deferred_state=True):
                     return text, True
                 # Output is unknown, even when the generating command is safe.
                 rewritten.append("\ue002SUBSTITUTION")
@@ -233,11 +284,11 @@ def shell_tokens(command):
             position += 1
         return "".join(rewritten), False
 
-    def possible_guarded(text, depth=0, supplied_program=False):
+    def possible_guarded(text, depth=0, supplied_program=False, deferred_state=False):
         """Classify executable positions, not diagnostic names or printed data."""
-        prepared, hidden = inspect_substitutions(shell_continuations(text), depth)
+        prepared, hidden = inspect_substitutions(shell_continuations(text), depth, deferred_state=deferred_state)
         if hidden:
-            return True
+            raise ValueError("guarded command substitution cannot be inspected")
         lexer = shlex.shlex(prepared, posix=True, punctuation_chars=";&|()<>\n")
         lexer.whitespace = " \t"
         lexer.whitespace_split = True
@@ -247,7 +298,12 @@ def shell_tokens(command):
         redirection_operand = False
         wrapper = ""
         wrapper_operand = False
-        integer_names = set()
+        # Shell-provided integer attributes exist before this command is parsed.
+        integer_names = {"OPTIND", "RANDOM", "SECONDS", "LINENO", "HISTCMD", "UID", "EUID", "PPID"}
+        loop_depth = 0
+        function_pending = False
+        body_states = []
+        found_guarded = False
         index = 0
         while index < len(words):
             raw = words[index]
@@ -258,15 +314,36 @@ def shell_tokens(command):
                 redirection_operand = False
                 continue
             if raw and all(c in ";&|()<>\n" for c in raw):
+                signature = re.fullmatch(r"\(\)\n*", raw) or all(c == "\n" for c in raw)
+                signature = signature or (raw == "(" and index < len(words) and re.fullmatch(r"\)\n*", words[index]))
+                signature = signature or (re.fullmatch(r"\)\n*", raw) and index >= 2 and words[index - 2] == "(")
+                if function_pending and not signature:
+                    raise ValueError("unsupported nonbrace function body cannot be inspected")
                 if wrapper_operand:
-                    return True
+                    raise ValueError("missing wrapper option operand")
                 if any(c in "<>" for c in raw):
                     redirection_operand = True
                 else:
                     head, wrapper = True, ""
                 continue
+            if head and word in {"{", "}"} and "\ue003" not in raw:
+                if word == "{":
+                    body_states.append(deferred_state)
+                    deferred_state = deferred_state or function_pending
+                    function_pending = False
+                elif body_states:
+                    deferred_state = body_states.pop()
             if not head:
                 continue
+            if function_pending:
+                raise ValueError("unsupported nonbrace function body cannot be inspected")
+            if (re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", word)
+                    and index < len(words) and (
+                        re.fullmatch(r"\(\)\n*", words[index])
+                        or (words[index] == "(" and index + 1 < len(words)
+                            and re.fullmatch(r"\)\n*", words[index + 1]))
+                    )):
+                function_pending = True
             if (
                 word.isdigit()
                 and index < len(words)
@@ -275,9 +352,15 @@ def shell_tokens(command):
                 continue
             if wrapper_operand:
                 if expanded:
-                    return True
+                    raise ValueError("expanded wrapper option operand")
+                if wrapper == "exec" and word.startswith("-"):
+                    raise ValueError("login-style executable name cannot be inspected")
                 wrapper_operand = False
                 continue
+            # A trap runs later in this shell: attributes can change after
+            # registration. Do not infer a future write is inert from current state.
+            if deferred_state and re.match(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[.*\])?\+?=", word):
+                raise ValueError("deferred callback variable assignment cannot be inspected")
             indexed_assignment = re.match(
                 r"^([A-Za-z_][A-Za-z0-9_]*)\[(.*)\](?:\+?=)", word
             )
@@ -288,6 +371,9 @@ def shell_tokens(command):
                     "unresolved arithmetic array assignment cannot be inspected"
                 )
             if indexed_assignment:
+                check_deferred_input(
+                    indexed_assignment.group(1), word[indexed_assignment.end() :], expanded
+                )
                 if indexed_assignment.group(
                     1
                 ) in integer_names and not literal_arithmetic(
@@ -300,6 +386,7 @@ def shell_tokens(command):
             if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\+?=", word):
                 variable, value = word.split("=", 1)
                 variable = variable.rstrip("+")
+                check_deferred_input(variable, value, expanded)
                 if variable in integer_names and (
                     expanded or not literal_arithmetic(value)
                 ):
@@ -334,11 +421,27 @@ def shell_tokens(command):
                                     break
                         index += 1
                     if balance:
-                        return True
+                        raise ValueError("unterminated compound assignment cannot be inspected")
                 continue
             if expanded:
-                return True
+                raise ValueError("expanded executable cannot be inspected")
             name = word if word == "." else Path(word).name
+            if loop_depth and name in {"declare", "typeset", "local", "export", "readonly", "unset"}:
+                raise ValueError("repeated loop variable attribute mutation cannot be inspected")
+            # Explicit local arrays establish fresh noninteger local bindings.
+            # Their compound values still pass the index/substitution checks below.
+            local_array = False
+            if name == "local" and index < len(words) and words[index] == "-a":
+                end = index + 1
+                while end < len(words) and not all(c in ";&|()<>\n" for c in words[end]):
+                    end += 1
+                local_array = end > index + 1 and all(
+                    "\ue002" not in value and re.fullmatch(
+                        r"[A-Za-z_][A-Za-z0-9_]*=\(.*\)", value.replace("\ue003", "")
+                    ) for value in words[index + 1:end]
+                )
+            if deferred_state and not local_array and name in {"declare", "typeset", "local", "export", "readonly", "unset", "read", "mapfile", "readarray", "let"}:
+                raise ValueError("deferred callback variable mutation cannot be inspected")
             if name in {"[[", "[", "test"}:
                 end = index
                 terminator = "]]" if name == "[[" else "]"
@@ -409,6 +512,21 @@ def shell_tokens(command):
                 for argument in arguments:
                     if argument.startswith("-") or argument == "--":
                         continue
+                    variable, separator, value = argument.partition("=")
+                    target = re.fullmatch(
+                        r"([A-Za-z_][A-Za-z0-9_]*)(?:\[(.*)\])?",
+                        variable.rstrip("+").replace("\ue002", ""),
+                    )
+                    if "\ue002" in variable and not target:
+                        raise ValueError("unresolved declaration variable target")
+                    variable_name = target.group(1) if target else variable.rstrip("+")
+                    if name != "unset":
+                        check_deferred_input(variable_name, value, not separator)
+                    # Declaration builtins reparse whole compound assignments:
+                    # outer shell quotes do not make their array indices inert.
+                    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\+?=\(", argument):
+                        if possible_guarded(argument, depth + 1):
+                            raise ValueError("compound declaration contains a guarded operation")
                     indexed = re.match(
                         r"^(?:[A-Za-z_][A-Za-z0-9_]*)?\[(.*)\](?:\+?=.*)?$", argument
                     )
@@ -416,19 +534,46 @@ def shell_tokens(command):
                         raise ValueError(
                             "unresolved builtin arithmetic array index cannot be inspected"
                         )
-                    if integer:
-                        variable, separator, value = argument.partition("=")
-                        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", variable) or (
+                    if integer or (separator and variable_name in integer_names and not local_array):
+                        if not target or (target.group(2) is not None and not literal_arithmetic(target.group(2))) or (
                             separator
                             and ("\ue002" in value or not literal_arithmetic(value))
                         ):
                             raise ValueError(
                                 "unresolved integer declaration cannot be inspected"
                             )
-                        integer_names.add(variable)
+                        if integer:
+                            integer_names.add(variable_name)
                 index = end
                 head = False
                 continue
+            if name in {"for", "select"}:
+                loop_depth += 1
+                if index >= len(words):
+                    raise ValueError("missing loop binding cannot be inspected")
+                binding = words[index].replace("\ue003", "")
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", binding):
+                    raise ValueError("unresolved loop binding cannot be inspected")
+                check_deferred_input(binding, unresolved=True)
+                if deferred_state:
+                    raise ValueError("deferred loop variable mutation cannot be inspected")
+                if binding in integer_names:
+                    value_start = index + 1
+                    if value_start >= len(words) or words[value_start] != "in":
+                        raise ValueError("implicit integer loop inputs cannot be inspected")
+                    value_start += 1
+                    end = value_start
+                    while end < len(words) and not all(c in ";&|()<>\n" for c in words[end]):
+                        if not literal_arithmetic(words[end].replace("\ue003", "")):
+                            raise ValueError("unresolved integer loop value cannot be inspected")
+                        end += 1
+                head = True
+                continue
+            if "\ue003" not in raw:
+                if name in {"while", "until"}:
+                    loop_depth += 1
+                elif name == "done":
+                    loop_depth = max(0, loop_depth - 1)
             if name in {
                 "if",
                 "then",
@@ -460,6 +605,8 @@ def shell_tokens(command):
                 wrapper = name
                 continue
             if wrapper and word.startswith("-"):
+                if wrapper == "exec" and word == "-l":
+                    raise ValueError("login-style executable name cannot be inspected")
                 if wrapper == "command" and word in ("-v", "-V"):
                     head = False  # command lookup prints names; it does not run them.
                     continue
@@ -487,8 +634,50 @@ def shell_tokens(command):
                 ):
                     pass
                 else:
-                    return True
+                    raise ValueError("unsupported wrapper option cannot be inspected")
                 continue
+            if name in {"alias", "shopt"}:
+                end = index
+                while end < len(words) and not (
+                    words[end] and all(c in ";&|()<>\n" for c in words[end])
+                ):
+                    end += 1
+                operands = [value.replace("\ue003", "") for value in words[index:end]]
+                if any("\ue002" in value for value in operands):
+                    raise ValueError("unresolved shell alias state cannot be inspected")
+                if name == "alias" and any("=" in value for value in operands):
+                    raise ValueError("shell alias definitions cannot be inspected")
+                if name == "shopt" and "expand_aliases" in operands and any(
+                    value.startswith("-") and "s" in value[1:] for value in operands
+                ):
+                    raise ValueError("shell alias expansion state cannot be inspected")
+                index = end
+                head = False
+                continue
+            if name == "set":
+                position = index
+                while position < len(words):
+                    option = words[position].replace("\ue003", "")
+                    position += 1
+                    if option == "--" or not option.startswith(("-", "+")):
+                        break
+                    if "\ue002" in option:
+                        raise ValueError("unresolved shell option can enable tracing")
+                    if option.startswith("-") and "x" in option[1:]:
+                        raise ValueError("shell tracing can execute deferred prompt code")
+                    if option in {"-o", "+o"} and position < len(words):
+                        setting = words[position].replace("\ue003", "")
+                        if not setting.startswith(("-", "+")) and not all(
+                            char in ";&|()<>\n" for char in setting
+                        ):
+                            if "\ue002" in setting or option == "-o" and setting == "xtrace":
+                                raise ValueError("shell tracing can execute deferred prompt code")
+                            position += 1
+                head = False
+                continue
+            if name == "getopts":
+                # Implicit destination, OPTARG and OPTIND writes remain unproved.
+                raise ValueError("implicit getopts variable writes cannot be inspected")
             if name in {"printf", "read", "mapfile", "readarray"}:
                 end = index
                 while end < len(words) and not (
@@ -496,6 +685,26 @@ def shell_tokens(command):
                 ):
                     end += 1
                 operands = [value.replace("\ue003", "") for value in words[index:end]]
+                if name == "printf":
+                    format_args = operands
+                    if format_args and format_args[0].startswith("-v"):
+                        if deferred_state:
+                            raise ValueError("deferred callback printf assignment cannot be inspected")
+                        format_args = format_args[2 if format_args[0] == "-v" else 1 :]
+                    if format_args and format_args[0] == "--":
+                        format_args = format_args[1:]
+                    if format_args and "\ue002" in format_args[0]:
+                        raise ValueError("unresolved printf format can write deferred shell inputs")
+                    if format_args and re.search(r"%(?:[0-9]+\$)?[-+ #0\x27]*(?:[0-9]+|\*)?(?:\.(?:[0-9]*|\*))?[hljztL]*n", format_args[0].replace("%%", "")):
+                        if deferred_state:
+                            raise ValueError("deferred callback printf count write cannot be inspected")
+                        # Count formats may repeat or consume width arguments.
+                        # Any possible deferred destination must remain inert;
+                        # literal formats without count writes keep data inert.
+                        for target in format_args[1:]:
+                            if "\ue002" in target:
+                                raise ValueError("unresolved printf count destination")
+                            check_deferred_input(target.split("[", 1)[0], unresolved=True)
                 if name == "printf" and operands and operands[0].startswith("-v"):
                     if operands[0] == "-v":
                         if len(operands) < 2:
@@ -512,6 +721,7 @@ def shell_tokens(command):
                         variable = target
                     else:
                         raise ValueError("unresolved printf variable target")
+                    check_deferred_input(variable, unresolved=True)
                     # Integer variable writes evaluate the resulting string as
                     # Bash arithmetic. Prove only this simple literal format;
                     # unresolved formats/values run in a separate invocation.
@@ -554,11 +764,12 @@ def shell_tokens(command):
                         indexed = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\[(.*)\]", target)
                         variable = indexed.group(1) if indexed else target
                         if indexed:
-                            _, guarded = inspect_substitutions(indexed.group(2), depth + 1, quote_sensitive=False)
+                            _, guarded = inspect_substitutions(indexed.group(2), depth + 1, quote_sensitive=False, deferred_state=deferred_state)
                             if guarded or not literal_arithmetic(indexed.group(2)):
                                 raise ValueError("unresolved input destination arithmetic cannot be inspected")
                         elif not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", target):
                             raise ValueError("unresolved input builtin variable target")
+                        check_deferred_input(variable, unresolved=True)
                         if variable in integer_names:
                             raise ValueError("unresolved input builtin integer assignment")
                 head = False
@@ -574,7 +785,7 @@ def shell_tokens(command):
                     operands = operands[1:]
                 if operands and operands[0] not in {"-p", "-l", "-", ""}:
                     if any("\ue002" in value for value in operands) or possible_guarded(
-                        operands[0], depth + 1, supplied_program=True
+                        operands[0], depth + 1, supplied_program=True, deferred_state=True
                     ):
                         raise ValueError(
                             "trap callback requires a separate literal invocation"
@@ -624,7 +835,7 @@ def shell_tokens(command):
                 }
                 while position < len(words):
                     option = words[position].replace("\ue003", "")
-                    if option in {";", "&", "&&", "|", "||", "\n"}:
+                    if words[position] and all(char in ";&|()<>\n" for char in words[position]):
                         break
                     position += 1
                     if option in valued or option == "-fprintf":
@@ -675,7 +886,7 @@ def shell_tokens(command):
                     expression = operand.replace("\ue003", "")
                     if expression == "--":
                         continue
-                    _, guarded = inspect_substitutions(expression, depth + 1, quote_sensitive=False)
+                    _, guarded = inspect_substitutions(expression, depth + 1, quote_sensitive=False, deferred_state=deferred_state)
                     if guarded or not literal_arithmetic(expression):
                         raise ValueError("unresolved arithmetic builtin cannot be inspected")
                 head = False
@@ -715,6 +926,25 @@ def shell_tokens(command):
                     if not option.startswith("-") or option == "-":
                         break
                     child += 1
+                    if name == "sudo":
+                        if option.startswith("--") and any(
+                            mode.startswith(option.partition("=")[0])
+                            for mode in ("--login", "--shell")
+                        ):
+                            raise ValueError("sudo shell startup mode cannot be inspected")
+                        if not option.startswith("--"):
+                            for offset, flag in enumerate(option[1:], 1):
+                                if flag in "is":
+                                    raise ValueError("sudo shell startup mode cannot be inspected")
+                                if "-" + flag in operands:
+                                    if offset == len(option) - 1:
+                                        if child >= len(words) or "\ue002" in words[child] or all(c in ";&|()<>\n" for c in words[child]):
+                                            raise ValueError("unresolved sudo option operand")
+                                        child += 1
+                                    break  # Remaining characters are operand data.
+                                if flag not in "AbBEHkKlnPSvV":
+                                    raise ValueError("unsupported sudo option cannot be inspected")
+                            continue
                     if option in operands:
                         if child >= len(words) or "\ue002" in words[child] or all(c in ";&|()<>\n" for c in words[child]):
                             unresolved = True
@@ -722,7 +952,7 @@ def shell_tokens(command):
                         child += 1
                     elif option in {"--help", "--version"} or option in {
                         "timeout": {"--foreground", "--preserve-status", "-v", "--verbose"},
-                        "sudo": {"-n", "--non-interactive", "-E", "--preserve-env", "-H", "--set-home", "-S", "--stdin", "-b", "--background", "-i", "--login", "-s", "--shell"},
+                        "sudo": {"-n", "--non-interactive", "-E", "--preserve-env", "-H", "--set-home", "-S", "--stdin", "-b", "--background"},
                         "setsid": {"-f", "--fork", "-w", "--wait", "-c", "--ctty"},
                         "chrt": {"-p", "--pid", "-a", "--all-tasks", "-f", "--fifo", "-r", "--rr", "-o", "--other", "-b", "--batch", "-i", "--idle", "-d", "--deadline", "-v", "--verbose"},
                         "ionice": {"-t", "--ignore"},
@@ -747,6 +977,8 @@ def shell_tokens(command):
                     else:
                         child += 1  # literal duration, priority or CPU mask
                 if unresolved:
+                    if name == "sudo":
+                        raise ValueError("unresolved sudo options cannot be inspected")
                     if name == "xargs":
                         raise ValueError("unresolved xargs executable rewriting cannot be inspected")
                     if any("\ue002" in value or git_executable(value.replace("\ue003", "")) or possible_guarded(value.replace("\ue003", ""), depth + 1) for value in words[index:]):
@@ -790,36 +1022,41 @@ def shell_tokens(command):
                     program = " ".join(value.replace("\ue003", "") for value in words[child:])
                     if possible_guarded(program, depth + 1):
                         raise ValueError("guarded watch shell program requires a separate literal Git invocation")
-                opaque_shell = name == "sudo" and any(value.replace("\ue003", "") in {"-s", "--shell", "-i", "--login"} for value in words[index:child])
-                if opaque_shell and child < len(words) and possible_guarded(words[child].replace("\ue003", ""), depth + 1):
-                    raise ValueError("opaque wrapper shell program cannot inspect guarded work")
                 if possible_guarded(shlex.join(words[child:]), depth + 1, supplied_program=supplied_program or name == "xargs"):
                     raise ValueError("guarded child execution wrapper requires a separate literal Git invocation")
                 head = False
                 continue
             if name == "function":
                 if index >= len(words) or "\ue002" in words[index] or all(c in ";&|()<>\n" for c in words[index]):
-                    return True
+                    raise ValueError("unresolved function declaration cannot be inspected")
                 # The declaration name is data; the body starts a new executable
                 # context. Function bodies containing guarded work are refused.
                 index += 1
+                function_pending = True
                 head = True
                 continue
             if name in {"eval", "source", "."}:
-                return True
+                raise ValueError("dynamic shell program cannot be inspected")
             if name in {"bash", "sh", "zsh", "dash", "ksh"}:
                 # Only inspect a literal -c program; files, stdin and expanded
                 # program strings are opaque and remain conservatively guarded.
                 for program_index in range(index, len(words)):
                     option = words[program_index].replace("\ue003", "")
-                    if option == "--command" or re.fullmatch(
-                        r"-[A-Za-z]*c[A-Za-z]*", option
-                    ):
+                    if option == "--xtrace" or re.fullmatch(r"-[A-Za-z]*x[A-Za-z]*", option):
+                        raise ValueError("shell tracing can execute deferred prompt code")
+                    if option in {"--noprofile", "--norc"}:
+                        continue
+                    # Only inert noninteractive options are understood here.
+                    # Login, interactive and named startup options can load
+                    # another program before the literal command is evaluated.
+                    if option != "--command" and not re.fullmatch(r"-[ceufnCprv]+", option):
+                        raise ValueError("shell startup or unsupported option cannot be inspected")
+                    if option == "--command" or "c" in option[1:]:
                         if program_index + 1 >= len(words):
-                            return True
+                            raise ValueError("missing shell command program")
                         program = words[program_index + 1]
                         if "\ue002" in program or possible_guarded(program, depth + 1):
-                            return True
+                            raise ValueError("guarded or expanded shell program cannot be inspected")
                         head = False
                         break
                     if all(c in ";&|()<>\n" for c in option) or not option.startswith(
@@ -827,7 +1064,7 @@ def shell_tokens(command):
                     ):
                         break
                 if head:
-                    return True
+                    raise ValueError("shell startup or nonliteral program cannot be inspected")
                 continue
             if git_executable(word):
                 for operand in words[index:]:
@@ -845,13 +1082,13 @@ def shell_tokens(command):
                 while index < len(words):
                     argument = words[index].replace("\ue003", "")
                     if "\ue002" in argument:
-                        return True
+                        raise ValueError("expanded Git argument cannot be inspected")
                     if any(c in "<>" for c in argument) or (
                         argument.isdigit()
                         and index + 1 < len(words)
                         and any(c in "<>" for c in words[index + 1])
                     ):
-                        return True
+                        raise ValueError("Git redirection before the operation cannot be inspected")
                     if argument and all(c in ";&|()<>\n" for c in words[index]):
                         break
                     if argument == "-c" or (argument.startswith("-c") and len(argument) > 2):
@@ -866,7 +1103,7 @@ def shell_tokens(command):
                         index += 1
                     elif argument in ("-C", "--git-dir", "--work-tree"):
                         if index + 1 >= len(words) or "\ue002" in words[index + 1] or (words[index + 1] and all(c in ";&|()<>\n" for c in words[index + 1])):
-                            return True
+                            raise ValueError("unresolved Git option operand cannot be inspected")
                         index += 2
                     elif argument.startswith(
                         ("-C", "-c", "--git-dir=", "--work-tree=")
@@ -883,10 +1120,10 @@ def shell_tokens(command):
                         break
                     else:
                         if argument.startswith("-") or argument in ("commit", "push"):
-                            return True
+                            found_guarded = True
                         break
             head = False
-        return False
+        return found_guarded
 
     shells = {
         "bash",
@@ -930,7 +1167,7 @@ def shell_tokens(command):
                     operand_pending = False
                     continue
                 if getattr(word, "expanded", False) and not re.match(
-                    r"^[A-Za-z_][A-Za-z0-9_]*=", word
+                    r"^[A-Za-z_][A-Za-z0-9_]*\+?=", word
                 ):
                     raise ValueError("expanded executable cannot be inspected")
                 if Path(word).is_absolute():
@@ -961,7 +1198,7 @@ def shell_tokens(command):
                         wrapper = "time"
                     continue
                 if word in {"env", "exec", "command", "builtin"} or re.match(
-                    r"^[A-Za-z_][A-Za-z0-9_]*=", word
+                    r"^[A-Za-z_][A-Za-z0-9_]*\+?=", word
                 ):
                     if word in {"env", "exec"}:
                         heads.append(word)
@@ -1008,12 +1245,14 @@ def shell_tokens(command):
     quote_state = ""
     arithmetic_depth = 0
     had_documents = False
+    previous_header_continued = False
     while line_index < len(lines):
         header = lines[line_index]
         line_index += 1
         documents = []
         header_substitution = False
         escaped_header = False
+        header_continued = False
         position = 0
         while position < len(header):
             char = header[position]
@@ -1021,6 +1260,7 @@ def shell_tokens(command):
                 escaped_header = False
             elif char == "\\" and quote_state != chr(39):
                 escaped_header = True
+                header_continued |= header[position + 1:] == "\n"
             elif arithmetic_depth:
                 if char == "`" or header.startswith("$(", position):
                     header_substitution = True
@@ -1070,6 +1310,10 @@ def shell_tokens(command):
             position += 1
         code.append(header)
         if documents:
+            # A continued header is shell code until its logical newline. Do
+            # not consume its pipeline as inert heredoc body text.
+            if header_continued or previous_header_continued:
+                raise ValueError("continued heredoc header cannot be inspected")
             had_documents = True
             if header_substitution and possible_guarded(header):
                 raise ValueError(
@@ -1087,6 +1331,7 @@ def shell_tokens(command):
                 raise ValueError(
                     "heredoc supplied to executable shell cannot be inspected"
                 )
+        previous_header_continued = header_continued
         for delimiter, strip_tabs, quoted in documents:
             while line_index < len(lines):
                 body = lines[line_index]
@@ -1198,6 +1443,7 @@ def shell_tokens(command):
     # search patterns and printed strings containing Git commands are ordinary data.
     group = []
     pipeline_pending = False
+    configuration_environment = False
     for word, operator in tokens + [(";", True)]:
         if operator and word.replace("\n", "") in ("|", "|&"):
             group.append((word, operator))
@@ -1213,6 +1459,25 @@ def shell_tokens(command):
             and any(char in word for char in ";&\n")
         ):
             heads = executable_heads(group)
+            at_command_head = True
+            for value, is_operator in group:
+                if is_operator:
+                    at_command_head = True
+                elif at_command_head:
+                    assignment = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\+?=", value)
+                    if assignment:
+                        name = assignment.group(1)
+                        # Git environment also selects config, repository,
+                        # namespace and transport. Never guess its push effects.
+                        configuration_environment |= name in ("HOME", "XDG_CONFIG_HOME") or name.startswith("GIT_")
+                        continue
+                    if value in ("builtin", "command", "env", "exec", "--", "-p"):
+                        continue
+                    at_command_head = False
+            if any(git_executable(head) for head in heads) and any(
+                not is_operator and value == "push" for value, is_operator in group
+            ) and (configuration_environment or any(head in ("env", "exec") for head in heads)):
+                raise ValueError("push configuration environment cannot be inspected")
             if any(
                 head in {"bash", "sh", "zsh", "dash", "ksh"} for head in heads
             ) and any(
@@ -1270,8 +1535,8 @@ def git_operation(args):
 
 try:
     tokens = shell_tokens(command)
-except ValueError:
-    deny("shell command cannot be inspected")
+except ValueError as error:
+    deny("shell command cannot be inspected: " + str(error))
 
 if (any(git_executable(word) for word, operator in tokens if not operator)
         and any(word == "push" for word, operator in tokens if not operator)):
@@ -1291,7 +1556,10 @@ if (any(git_executable(word) for word, operator in tokens if not operator)
     prior_uncertain = False
     for statement in statements:
         argv = list(statement)
-        while argv and (argv[0] in ("builtin", "command") or argv[0] in ("--", "-p")):
+        while argv and (
+            re.match(r"^[A-Za-z_][A-Za-z0-9_]*\+?=", argv[0])
+            or argv[0] in ("builtin", "command", "--", "-p")
+        ):
             argv.pop(0)
         if not argv:
             continue
@@ -1307,6 +1575,12 @@ if (any(git_executable(word) for word, operator in tokens if not operator)
                      and bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9.-]*", operation[2])))
         else:
             inert = name in ("echo", "printf", "true", "false", "pwd")
+            if name == "printf":
+                format_args = argv[1:]
+                if format_args and format_args[0] == "--":
+                    format_args = format_args[1:]
+                if format_args and re.search(r"%(?:[0-9]+\$)?[-+ #0\x27]*(?:[0-9]+|\*)?(?:\.(?:[0-9]*|\*))?[hljztL]*n", format_args[0].replace("%%", "")):
+                    inert = False
         inert = inert and not any(getattr(value, "expanded", False) or value in ("<", ">", ">>", "<<", "<<<") for value in argv)
         prior_uncertain |= not inert
     heads = []

@@ -28,7 +28,7 @@ A matcher contains a nested `hooks` list. This registers the installed commit ga
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $HOME/.claude/hooks/commit-gate.py",
+            "command": "python3 \"$HOME/.claude/hooks/commit-gate.py\"",
             "timeout": 70
           }
         ]
@@ -100,3 +100,60 @@ The bundled commit guard refuses multiple distinct commit destinations in one sh
 command before compiling; split those commits into separate commands. Repeated
 commits to one destination compile once within the 60-second compiler limit and
 70-second hook deadline. Pruning pushes are conservatively refused.
+
+Bash payloads must contain an explicit text `tool_input.command`; missing command
+fields fail closed. Inline alias definitions and enabling Bash alias expansion are
+unproved shell state. Trailing startup or tracing changes are inspected even after
+a literal Git operation. Unproved Git redirections and other uncertain executable
+forms fail closed. Login/interactive shell modes, unknown startup options and
+login-style executable names are refused before accepting a literal shell body.
+Explicit `sudo` login or shell modes are also refused, even with a child command,
+because wrapper-selected startup files remain unproved. This includes combined
+short options and replaces the earlier allowance for `sudo -s` printed data.
+Diagnostics name refused startup/tracing keys only.
+Substitutions inherit variable attributes from the calling shell. Variable writes
+inside executable substitutions remain unproved and are refused, including
+declaration and input builtins. Parameter assignments require simple literal
+arithmetic values outside callbacks; printed single-quoted examples stay data.
+Function bodies also run later, so their variable writes remain unproved.
+Explicit local noninteger arrays keep their existing index/substitution checks.
+Loop bindings count as writes: integer bindings need literal arithmetic inputs;
+bindings inside deferred bodies remain unproved. Plain string loops stay supported.
+Only brace function bodies are supported; other compound forms remain unproved.
+Loop bindings cannot write deferred shell startup or tracing selectors.
+Shell-provided integer variables also require literal arithmetic writes.
+Variable attribute changes inside repeated loops remain unproved.
+`getopts` implicit variable writes remain unproved; the guard refuses that builtin.
+Printed `getopts` text and command lookup remain supported.
+Plain literal `shell -c` bodies remain supported. This hook does not inspect
+shell-specific default startup files, including zsh's `~/.zshenv` when no
+`ZDOTDIR` is inherited. Treat those machine-owned files as a separate trust
+boundary; the parser checks do not prove that default shell startup is inert.
+
+Inspection fails closed when command payloads, runtimes, or shell state cannot be
+proved. This applies before determining whether a destination uses TypeScript.
+Inherited shell startup selectors or executable tracing inputs can run code before
+an otherwise harmless command, so those inputs are conservatively refused even
+for `true`. Fresh setup installs the gate without overwriting an existing file,
+checks its bytes and probes the installed path before creating settings. A differing
+customized gate or refused probe leaves no new registration. A later server setup
+failure cannot leave a newly registered gate path missing. Existing customized
+settings remain preserved.
+Avoid inherited startup selectors in the controlled hook environment;
+this restriction is not a claim that every selector value is harmful.
+
+Run state-changing preparation, such as staging or tests, separately from commits
+and pushes. Use a separate literal `git commit -F` with an already prepared message
+file rather than a command substitution. Ordinary pushes means separate supported
+literal pushes; preceding state-changing commands remain unproved. Unknown shell
+state is not allowed merely because the initial directory has no TypeScript file.
+The installer preserves customized gates. Verification requires the registered
+installed gate to match the bundled bytes; a preserved older gate needs review.
+
+Foundation verification also invokes the installed gate with a harmless `true`
+command in the current environment. A refusal fails setup and names inherited
+startup/tracing input keys without printing their values. This proves a usable
+script invocation; it still does not prove a live Claude session loaded the hook.
+Stored Git aliases and other commit-creating subcommands such as merge, revert,
+cherry-pick, and am are outside the literal commit guard. Check those changes
+through the development verification process before completing them.

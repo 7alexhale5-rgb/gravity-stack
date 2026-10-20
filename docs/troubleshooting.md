@@ -53,14 +53,14 @@ Common issues with Claude Code, Gravity Stack tooling, and the development envir
 
 2. For npm servers, verify the package is installed:
    ```bash
-   npx @playwright/mcp@0.0.68 --version
+   npx -y @playwright/mcp@0.0.68 --version
    ```
 
 3. Read `claude mcp list` and `claude mcp get <name>`; project registrations live in `.mcp.json`, not settings.json.
 
 4. Try running the server manually to see error output:
    ```bash
-   npx @playwright/mcp@0.0.68
+   npx -y @playwright/mcp@0.0.68
    ```
 
 5. If a server consistently fails, preserve its configuration, then remove it with `claude mcp remove <name> --scope user` and re-register the verified command after resolving the issue.
@@ -92,7 +92,7 @@ Common issues with Claude Code, Gravity Stack tooling, and the development envir
 
 4. Test the hook manually:
    ```bash
-   printf '%s\n' '{"tool_name":"Read","tool_input":{"file_path":"test.ts"}}' | python3 ~/.claude/hooks/commit-gate.py
+   printf '%s\n' '{"tool_name":"Bash","tool_input":{"command":"true"}}' | python3 ~/.claude/hooks/commit-gate.py
    ```
 
 ---

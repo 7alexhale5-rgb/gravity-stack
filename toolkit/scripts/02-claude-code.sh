@@ -26,6 +26,27 @@ done
 # Copy template settings if no settings exist
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ ! -f "$CONFIG_ROOT/settings.json" ]; then
+  # Install without overwriting a customized gate before registering its path.
+  python3 - "$SCRIPT_DIR/configs/commit-gate.py" "$CONFIG_ROOT/hooks/commit-gate.py" <<'PYGATE'
+import sys
+from pathlib import Path
+source, target = (Path(value) for value in sys.argv[1:])
+expected = source.read_bytes()
+try:
+    with target.open("xb") as output:
+        output.write(expected)
+except FileExistsError:
+    pass
+if target.read_bytes() != expected:
+    print("  FAIL customized commit gate differs; settings were not created", file=sys.stderr)
+    sys.exit(1)
+PYGATE
+  # Refuse unsupported environments before creating a new hook registration.
+  if ! printf '%s\n' '{"tool_name":"Bash","tool_input":{"command":"true"}}' |
+    python3 "$CONFIG_ROOT/hooks/commit-gate.py"; then
+    echo "  FAIL commit gate probe; settings were not created" >&2
+    exit 1
+  fi
   echo "  Copying template settings.json..."
   python3 - "$SCRIPT_DIR/configs/settings.json" "$CONFIG_ROOT" <<'PY'
 import json, shlex, sys
@@ -34,7 +55,7 @@ root = Path(sys.argv[2]).resolve()
 settings = json.loads(Path(sys.argv[1]).read_text())
 for group in settings['hooks']['PreToolUse']:
     for hook in group['hooks']:
-        if hook.get('command') == 'python3 $HOME/.claude/hooks/commit-gate.py':
+        if hook.get('command') in ('python3 $HOME/.claude/hooks/commit-gate.py', 'python3 \"$HOME/.claude/hooks/commit-gate.py\"'):
             hook['command'] = 'python3 ' + shlex.quote(str(root / 'hooks/commit-gate.py'))
 for group in settings['hooks']['PreCompact']:
     for hook in group['hooks']:

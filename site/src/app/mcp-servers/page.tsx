@@ -108,7 +108,8 @@ function ServerCard({ server, delay }: { server: MCPServer; delay: number }) {
         {server.apiKeyRequired && (
           <Callout variant="warning" title="Credentials Required">
             This server needs credentials (an API key or a sign-in). See its
-            description.
+            description. Set the named environment variables securely before
+            starting Claude. Keep real keys out of shared project files.
           </Callout>
         )}
         <CodeBlock
@@ -118,7 +119,7 @@ function ServerCard({ server, delay }: { server: MCPServer; delay: number }) {
             2,
           )}
           language="json"
-          filename=".mcp.json"
+          filename=".mcp.json (environment references only)"
         />
       </Card>
     </ScrollReveal>

@@ -11,8 +11,10 @@ from pathlib import Path
 import shutil
 import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SOURCE = Path(__file__).resolve().parents[1]
 
@@ -178,7 +180,11 @@ from pathlib import Path
 root=Path(os.environ['HOME']);store=root/'.claude.json'
 if sys.argv[1:3] != ['mcp','add']: sys.exit(3)
 name=sys.argv[sys.argv.index('--scope')+2]
-d=json.loads(store.read_text());d['mcpServers'][name]={'command':'fixture'}
+entry={'command':'fixture'}
+if '--env' in sys.argv:
+    key,value=sys.argv[sys.argv.index('--env')+1].split('=',1)
+    entry['env']={key:value}
+d=json.loads(store.read_text());d['mcpServers'][name]=entry
 store.write_text(json.dumps(d))
 with (root/'calls').open('a') as f:f.write(name+'\\n')
 """)
@@ -207,6 +213,57 @@ with (root/'calls').open('a') as f:f.write(name+'\\n')
 
 
 class PhaseSix(unittest.TestCase):
+    def test_review37_baseline_ignores_inherited_profile(self):
+        unrelated = self.root / "unrelated-profile"
+        unrelated.mkdir()
+        unrelated_settings = unrelated / "settings.json"
+        unrelated_settings.write_text('{"private_fixture": "unchanged"}\n')
+        before = unrelated_settings.read_bytes()
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(unrelated)}):
+            fixture = PhaseSix("test_real_verifier_reaches_optional_install")
+            fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.real_verifier()
+        result = fixture.run_installer("--skip-dev-protocol")
+        with self.subTest(case="fixture-environment"):
+            self.assertTrue(
+                "CLAUDE_CONFIG_DIR" not in fixture.env,
+                "baseline fixture inherited a custom profile",
+            )
+        with self.subTest(case="owned-baseline"):
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        (fixture.home / ".claude/settings.json").unlink()
+        missing = fixture.run_installer("--skip-dev-protocol")
+        with self.subTest(case="owned-settings-required"):
+            self.assertEqual(missing.returncode, 1, missing.stdout + missing.stderr)
+        self.assertEqual(unrelated_settings.read_bytes(), before)
+
+    def test_review36_preserved_unsafe_home_requires_quoted_expansion(self):
+        self.home = self.root / "Alex Hale"
+        self.home.mkdir()
+        self.env["HOME"] = str(self.home)
+        self.real_verifier()
+        store = self.home / ".claude/settings.json"
+        baseline = json.loads(store.read_text())
+        for spelling, expected in (
+            ("$HOME", 1),
+            ("${HOME}", 1),
+            ('"$HOME/.claude/hooks/commit-gate.py"', 0),
+            ('"${HOME}/.claude/hooks/commit-gate.py"', 0),
+        ):
+            settings = json.loads(json.dumps(baseline))
+            command = "python3 " + (
+                spelling
+                if spelling.startswith('"')
+                else spelling + "/.claude/hooks/commit-gate.py"
+            )
+            settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"] = command
+            original = json.dumps(settings)
+            store.write_text(original)
+            result = self.run_installer("--skip-dev-protocol")
+            self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+            self.assertEqual(store.read_text(), original)
+
     def test_review35_handler_interpreter_must_match_verified_runtime(self):
         self.real_verifier()
         self.script("python", "#!/bin/sh\nprintf 'Python 2.7.18\\n'\nexit 1\n")
@@ -291,6 +348,7 @@ chmod +x "$dest/install.sh"
             HOME=str(self.home),
             PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
         )
+        self.env.pop("CLAUDE_CONFIG_DIR", None)
 
     def script(self, name, content):
         path = self.bin / name
@@ -351,7 +409,34 @@ chmod +x "$dest/install.sh"
                 }
             )
         )
-        (self.home / ".claude/hooks/commit-gate.py").write_text("# fixture hook")
+        (self.toolkit / "configs").mkdir(exist_ok=True)
+        shutil.copy2(
+            SOURCE / "toolkit/configs/commit-gate.py",
+            self.toolkit / "configs/commit-gate.py",
+        )
+        shutil.copy2(
+            SOURCE / "toolkit/configs/commit-gate.py",
+            self.home / ".claude/hooks/commit-gate.py",
+        )
+
+    def test_review41_different_gate_fails_and_preserves(self):
+        self.real_verifier()
+        gate = self.home / ".claude/hooks/commit-gate.py"
+        gate.write_text("# customized old gate\n")
+        original = gate.read_bytes()
+        result = self.run_installer("--skip-dev-protocol")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(gate.read_bytes(), original)
+
+    def test_review42_inherited_startup_refusal_visible_in_verifier(self):
+        self.real_verifier()
+        startup = self.root / "owned startup"
+        startup.mkdir()
+        (startup / ".zshenv").write_text(":\n")
+        self.env["ZDOTDIR"] = str(startup)
+        result = self.run_installer("--skip-dev-protocol")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("ZDOTDIR", result.stdout)
 
     def test_real_verifier_reaches_optional_install(self):
         self.real_verifier()
@@ -359,6 +444,19 @@ chmod +x "$dest/install.sh"
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("11/11 passed", result.stdout)
         self.assertTrue((self.home / "installed-args").is_file())
+
+    def test_review42_verifier_runs_from_scripts_directory(self):
+        self.real_verifier()
+        result = subprocess.run(
+            ["bash", "05-verify.sh"],
+            cwd=self.toolkit / "scripts",
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("11/11 passed", result.stdout)
 
     def test_selected_profile_cannot_borrow_default_gate(self):
         self.real_verifier()
@@ -377,7 +475,9 @@ chmod +x "$dest/install.sh"
             shutil.copy2(
                 SOURCE / "toolkit/scripts" / script, self.toolkit / "scripts" / script
             )
-        shutil.copytree(SOURCE / "toolkit/configs", self.toolkit / "configs")
+        shutil.copytree(
+            SOURCE / "toolkit/configs", self.toolkit / "configs", dirs_exist_ok=True
+        )
         profile = self.root / "selected profile's config"
         self.env["CLAUDE_CONFIG_DIR"] = str(profile)
         default = self.home / ".claude/settings.json"
@@ -637,6 +737,154 @@ chmod +x "$dest/install.sh"
             (self.home / "installed-args").read_text(), "--target both --yes\n"
         )
         self.assertEqual((self.home / "calls").read_text(), "clone\n")
+
+
+class Review43MemoryReadback(unittest.TestCase):
+    def case(self, env_value, expected_pass, include_env=True):
+        with tempfile.TemporaryDirectory(prefix='gravity43-memory-') as directory:
+            root = Path(directory); binary = root / 'bin'; binary.mkdir()
+            stub = binary / 'claude'
+            stub.write_text('#!/bin/sh\nprintf unexpected-registration >> "$HOME/calls"\nexit 1\n')
+            stub.chmod(0o755)
+            servers = {name: {'command': 'custom-' + name, 'args': ['--preserve'], 'custom': {'keep': True}}
+                       for name in ('playwright', 'firecrawl', 'perplexity', 'memory', 'hacker-news')}
+            if include_env:
+                servers['memory']['env'] = env_value
+            servers['unrelated-private-server'] = {'url': 'https://example.invalid/custom', 'custom': ['retain']}
+            store = root / '.claude.json'; store.write_text(json.dumps({'mcpServers': servers, 'preferences': {'keep': True}}))
+            before = store.read_bytes()
+            env = {'PATH': str(binary) + os.pathsep + str(Path(sys.executable).parent) + os.pathsep + '/usr/bin:/bin',
+                   'HOME': str(root), 'PYTHONDONTWRITEBYTECODE': '1'}
+            for run in range(2):
+                result = subprocess.run(['/bin/bash', str(SOURCE / 'toolkit/scripts/03-mcp-servers.sh')], cwd=root, env=env, capture_output=True, text=True, timeout=30)
+                with self.subTest(run=run):
+                    self.assertEqual(result.returncode == 0, expected_pass, result.stdout + result.stderr)
+                    self.assertEqual(store.read_bytes(), before)
+                    self.assertFalse((root / 'calls').exists())
+
+    def test_existing_memory_requires_absolute_env_path(self):
+        for name, value, included in (('missing-env', None, False), ('missing-path', {}, True),
+                                      ('null-env', None, True), ('list-env', [], True),
+                                      ('null-path', {'MEMORY_FILE_PATH': None}, True),
+                                      ('relative', {'MEMORY_FILE_PATH': 'graph.json'}, True),
+                                      ('empty', {'MEMORY_FILE_PATH': ''}, True),
+                                      ('nontext', {'MEMORY_FILE_PATH': 17}, True)):
+            with self.subTest(case=name):
+                self.case(value, False, included)
+
+    def test_existing_absolute_memory_and_custom_servers_preserved(self):
+        self.case({'MEMORY_FILE_PATH': '/private/gravity43-custom-memory/graph.json', 'CUSTOM_SETTING': 'keep'}, True)
+
+
+class Review44RegistrationProbe(unittest.TestCase):
+    def case(self, selector, existing=False):
+        with tempfile.TemporaryDirectory(prefix='gravity44-setup-') as directory:
+            root = Path(directory); binary = root / 'bin'; binary.mkdir()
+            stub = binary / 'claude'; stub.write_text('#!/bin/sh\necho fixture-version\n'); stub.chmod(0o755)
+            profile = root / 'profile'; profile.mkdir(); settings = profile / 'settings.json'
+            original = b'{"custom": "preserve"}\n'
+            if existing:
+                settings.write_bytes(original)
+            env = {'PATH': str(binary) + os.pathsep + str(Path(sys.executable).parent) + os.pathsep + '/usr/bin:/bin',
+                   'CLAUDE_CONFIG_DIR': str(profile), 'PYTHONDONTWRITEBYTECODE': '1'}
+            if selector:
+                env['ZDOTDIR'] = '/tmp/gravity44-private-selector-value'
+            result = subprocess.run(['/bin/bash', str(SOURCE / 'toolkit/scripts/02-claude-code.sh')], cwd=root,
+                                    env=env, capture_output=True, text=True, timeout=30)
+            self.assertNotIn('gravity44-private-selector-value', result.stdout + result.stderr)
+            if existing:
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(settings.read_bytes(), original)
+            elif selector:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(settings.exists())
+                self.assertIn('ZDOTDIR', result.stderr)
+            else:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(settings.exists())
+
+    def test_refused_probe_does_not_register_new_hook(self):
+        self.case(True)
+
+    def test_supported_environment_and_existing_settings_preserved(self):
+        self.case(False)
+        self.case(True, existing=True)
+
+
+class Review46EarlyGateInstallation(unittest.TestCase):
+    def case(self, custom=False):
+        with tempfile.TemporaryDirectory(prefix='gravity46-setup-') as directory:
+            root = Path(directory); binary = root / 'bin'; binary.mkdir(); profile = root / 'profile'; profile.mkdir()
+            stub = binary / 'claude'; stub.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then echo fixture-version; exit 0; fi\nexit 1\n'); stub.chmod(0o755)
+            gate = profile / 'hooks/commit-gate.py'
+            if custom:
+                gate.parent.mkdir(); gate.write_bytes(b'# customized gate preserved\n')
+            env = {'PATH': str(binary) + os.pathsep + str(Path(sys.executable).parent) + os.pathsep + '/usr/bin:/bin',
+                   'CLAUDE_CONFIG_DIR': str(profile), 'PYTHONDONTWRITEBYTECODE': '1'}
+            phase2 = subprocess.run(['/bin/bash', str(SOURCE / 'toolkit/scripts/02-claude-code.sh')], cwd=root,
+                                    env=env, capture_output=True, text=True, timeout=30)
+            if custom:
+                self.assertNotEqual(phase2.returncode, 0)
+                self.assertEqual(gate.read_bytes(), b'# customized gate preserved\n')
+                self.assertFalse((profile / 'settings.json').exists())
+                return
+            self.assertEqual(phase2.returncode, 0, phase2.stderr)
+            phase3 = subprocess.run(['/bin/bash', str(SOURCE / 'toolkit/scripts/03-mcp-servers.sh')], cwd=root,
+                                    env=env, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(phase3.returncode, 0)
+            self.assertTrue((profile / 'settings.json').exists())
+            self.assertTrue(gate.is_file(), 'phase3 failure must not leave a missing registered gate')
+            self.assertEqual(gate.read_bytes(), (SOURCE / 'toolkit/configs/commit-gate.py').read_bytes())
+            payload = json.dumps({'tool_name': 'Bash', 'tool_input': {'command': 'true'}})
+            probe = subprocess.run([sys.executable, str(gate)], input=payload, capture_output=True, text=True,
+                                   env=env, timeout=10)
+            self.assertEqual(probe.returncode, 0, probe.stderr)
+
+    def test_phase3_failure_leaves_present_working_registered_gate(self):
+        self.case()
+
+    def test_custom_gate_is_preserved_without_new_registration(self):
+        self.case(custom=True)
+
+
+class Review47MatcherArguments(unittest.TestCase):
+    setUp = PhaseSix.setUp
+    script = PhaseSix.script
+    real_verifier = PhaseSix.real_verifier
+    run_installer = PhaseSix.run_installer
+
+    def test_option_looking_matchers_never_credit_or_preload(self):
+        self.real_verifier()
+        marker = self.root / 'node-preload-ran'
+        module = self.root / 'owned-matcher.cjs'
+        module.write_text("require('fs').writeFileSync(" + json.dumps(str(marker)) + ", 'loaded');\n")
+        store = self.home / '.claude/settings.json'
+        value = json.loads(store.read_text())
+        for matcher in ('--no-warnings', '--trace-warnings', '--require=' + str(module)):
+            value['hooks']['PreToolUse'][0]['matcher'] = matcher
+            original = json.dumps(value)
+            store.write_text(original)
+            result = self.run_installer('--skip-dev-protocol')
+            for label, actual, expected in (('exit', result.returncode, 1),
+                                            ('canary', marker.exists(), False),
+                                            ('settings-preserved', store.read_text() == original, True)):
+                with self.subTest(matcher=matcher, check=label):
+                    self.assertEqual(actual, expected)
+
+    def test_regex_and_exact_matcher_controls(self):
+        self.real_verifier()
+        store = self.home / '.claude/settings.json'
+        value = json.loads(store.read_text())
+        for matcher, expected in (('Bash', 0), ('Bash|Read', 0), ('^Bash$', 0),
+                                  ('^Read$', 1), ('--no-warnings|Bash', 0), ('[', 1)):
+            with self.subTest(matcher=matcher):
+                value['hooks']['PreToolUse'][0]['matcher'] = matcher
+                original = json.dumps(value)
+                store.write_text(original)
+                result = self.run_installer('--skip-dev-protocol')
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                self.assertEqual(store.read_text(), original)
+
 
 
 if __name__ == "__main__":

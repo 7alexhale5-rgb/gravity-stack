@@ -53,6 +53,7 @@ PY
   if [[ $cli_status -ne 0 && $failed -eq 0 && $errors -eq 0 ]]; then
     echo "  FAIL evaluation CLI exited $cli_status"
     run_error=$((run_error+1))
+    continue
   fi
 
   total_pass=$((total_pass + passed))
