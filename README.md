@@ -113,6 +113,7 @@ gravity-stack/
 │   └── env/                    # Drop-in env mirror (agents, CARL, hooks, references)
 ├── docs/
 │   ├── carl.md
+│   ├── chief-of-staff.md        # Directing specialist sessions
 │   ├── hooks.md
 │   ├── skills.md
 │   ├── plugins.md
@@ -139,6 +140,7 @@ gravity-stack/
 | [Opus 4.7](docs/opus-4-7.md)                                     | Historical. Companion kit pointer + 30-second orientation                                     |
 | [Environment audit (2026-03)](docs/environment-audit-2026-03.md) | Historical. Deep peer-comparison inventory — plugins, MCPs, hooks, skills, CARL rules, agents |
 | [CARL](docs/carl.md)                                             | Governance engine deep-dive                                                                   |
+| [Chief of staff](docs/chief-of-staff.md)                         | Directing specialist sessions: one session per stream, narrow agents, one merger per repo     |
 | [Hooks](docs/hooks.md)                                           | Lifecycle hooks with code                                                                     |
 | [Skills](docs/skills.md)                                         | Catalog and invocation patterns                                                               |
 | [Plugins](docs/plugins.md)                                       | Marketplace plugins with priorities                                                           |

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-26
+
+### Docs
+
+- New deep-dive `docs/chief-of-staff.md`: the chief-of-staff operating model for multi-stream work. The chief of staff directs and builds nothing; each stream runs as its own session that outlives it; each session uses subagent-driven development; every task goes to the narrowest agent type; one owner per PR and one merger per repo. Covers the CoS files (roster, common brief, state log, resume prompt, unfinished-work register), the failure modes (lanes stop at session close, usage limits and network drops, unreliable auto-continue, blocking questions, records that must leave the laptop) and the daily and weekly upkeep. Generic: no client or personal data.
+- README: added the page to the project tree and the Documentation table. `docs/CONTEXT.md` Inputs lists it.
+
 ## 2026-09-29
 
 ### Models
