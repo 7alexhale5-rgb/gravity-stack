@@ -5,7 +5,7 @@ root.
 
 ## Inputs
 
-- Current docs: `carl.md`, `design-system.md`, `environment-audit-2026-03.md`, `hooks.md`,
+- Current docs: `carl.md`, `chief-of-staff.md`, `design-system.md`, `environment-audit-2026-03.md`, `hooks.md`,
   `mcp-servers.md`, `opus-4-7.md`, `plugins.md`, `skills.md`, `troubleshooting.md`.
 - The code/behavior each doc describes (in `toolkit/` or `site/`).
 - Missing input: a doc describing a script or hook that no longer exists in `toolkit/` — flag
