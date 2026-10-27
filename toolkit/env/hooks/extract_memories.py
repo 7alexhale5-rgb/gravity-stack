@@ -22,7 +22,7 @@ from pathlib import Path
 
 # Shared Groq client (Fix 3.1 + 3.2 from audit)
 sys.path.insert(0, str(Path(__file__).parent))
-from groq_client import call_groq, log_failure
+from groq_client import _is_retryable, call_groq_detailed, log_failure
 
 # --- Configuration ---
 MAX_SESSION_LINES = 80       # Read last N lines of session JSONL
@@ -35,12 +35,14 @@ EXTRACT_MODEL = os.environ.get("EXTRACT_GROQ_MODEL", "openai/gpt-oss-20b")
 
 # --- Budget (the PreCompact hook timeout in settings.template.json is 20s) ---
 # Retry must never push the hook past its timeout: a killed PreCompact is worse
-# than a dropped extraction. Worst case: 6s call + ~2.5s backoff + 6s call
-# = ~15s, inside a 17s deadline the client itself enforces.
+# than a dropped extraction. Every Groq attempt is cut off at a 17s deadline
+# the client enforces on curl itself. The current session goes first; a backlog
+# replay starts only when a full call (6s + ~2.5s backoff + 6s) still fits.
 HOOK_BUDGET_S = 20
 BUDGET_RESERVE_S = 3         # writes + interpreter teardown
 CALL_TIMEOUT_S = 6
 MAX_ATTEMPTS = 2
+FULL_CALL_S = MAX_ATTEMPTS * CALL_TIMEOUT_S + 2.5  # worst case incl. max backoff
 
 # --- Dead letter (nothing is lost when Groq is down) ---
 DEAD_LETTER_DIR = Path.home() / ".claude" / "sensory-memory" / "dead-letter"
@@ -213,17 +215,26 @@ def _atomic_write_json(path: Path, data: dict) -> None:
         raise
 
 
-def _extract_and_write(prompt: str, memory_dir: Path, deadline: float) -> bool:
-    """One extraction attempt (with the client's internal retry). True if memories
-    were processed; False means the chunk must be parked, never dropped."""
-    extraction = call_groq(
+def _project_dir_name(path) -> str:
+    """Claude Code's transcript folder name for a working folder: every character
+    that is not a letter or digit becomes '-'. Same rule as carl-hook.py's
+    _project_dir_name (a test keeps the two identical)."""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(path))
+
+
+def _extract_and_write(prompt: str, memory_dir: Path, deadline: float) -> str:
+    """One extraction (with the client's internal retry). Returns "" when memories
+    were processed, else the failure kind; _is_retryable(kind) says whether the
+    chunk is worth keeping for a later replay."""
+    extraction, kind = call_groq_detailed(
         prompt, model=EXTRACT_MODEL, timeout=CALL_TIMEOUT_S,
         max_attempts=MAX_ATTEMPTS, deadline=deadline
     )
-    if not extraction:
-        return False
-    write_memories(extraction, memory_dir)
-    return True
+    if extraction is None:
+        return kind or "unexpected_none"
+    if extraction:  # an empty object means nothing worth saving
+        write_memories(extraction, memory_dir)
+    return ""
 
 
 def _dead_letter_park(prompt: str, memory_dir: Path, reason: str) -> None:
@@ -261,18 +272,33 @@ def _dead_letter_maintain() -> None:
         log_failure(f"dead_letter_maintain_failed: {type(exc).__name__}")
 
 
+def _dead_letter_recover_stale_claims() -> None:
+    """Return claims left by a hook that was killed mid-replay. A claim older than
+    the hook timeout cannot belong to a live run, so it goes back in the queue."""
+    if not DEAD_LETTER_DIR.is_dir():
+        return
+    cutoff = time.time() - HOOK_BUDGET_S
+    for claimed in DEAD_LETTER_DIR.glob("*.claiming-*"):
+        try:
+            if claimed.stat().st_mtime < cutoff:
+                os.replace(claimed, claimed.with_name(claimed.name.split(".claiming-")[0] + ".json"))
+                log_failure(f"dead_letter_claim_recovered: {claimed.name}")
+        except OSError:
+            continue
+
+
 def _dead_letter_drain(deadline: float) -> None:
     """Replay parked chunks oldest-first, bounded by the hook's budget.
 
-    Claims each file by atomic rename so two concurrent sessions cannot process
-    the same chunk. Stops while enough budget remains for the CURRENT session's
-    own extraction: the backlog must never starve fresh content.
+    Runs after the current session's extraction, so the backlog never starves
+    fresh content. Each replay starts only when a full call still fits before
+    the deadline. Claims each file by atomic rename so two concurrent sessions
+    cannot process the same chunk.
     """
     if not DEAD_LETTER_DIR.is_dir():
         return
-    reserve_for_current = CALL_TIMEOUT_S + 2
     for path in sorted(DEAD_LETTER_DIR.glob("*.json")):
-        if time.monotonic() + CALL_TIMEOUT_S + reserve_for_current > deadline:
+        if deadline - time.monotonic() < FULL_CALL_S:
             return  # out of budget; the rest stay parked for the next run
         claimed = path.with_suffix(f".claiming-{os.getpid()}")
         try:
@@ -286,11 +312,15 @@ def _dead_letter_drain(deadline: float) -> None:
                 log_failure(f"dead_letter_discarded_missing_dir: {path.name}")
                 claimed.unlink(missing_ok=True)
                 continue
-            if _extract_and_write(payload["prompt"], memory_dir, deadline):
+            kind = _extract_and_write(payload["prompt"], memory_dir, deadline)
+            if not kind:
                 claimed.unlink(missing_ok=True)
                 log_failure(f"dead_letter_replayed: {path.name}")
+            elif not _is_retryable(kind):
+                claimed.unlink(missing_ok=True)  # replaying cannot fix it
+                log_failure(f"dead_letter_dropped_permanent: {kind}: {path.name}")
             else:
-                os.replace(claimed, path)  # still failing: requeue untouched
+                os.replace(claimed, path)  # transient: requeue untouched
                 return  # Groq is down; stop hammering it this run
         except Exception as exc:
             log_failure(f"dead_letter_replay_error: {type(exc).__name__}")
@@ -306,6 +336,11 @@ def find_session_file(input_data: dict) -> Path | None:
     session_id = input_data.get("sessionId", "") or input_data.get("session_id", "")
     cwd = input_data.get("cwd", "")
 
+    # The hook input names the transcript directly; prefer it over the rebuilt path.
+    given = input_data.get("transcript_path")
+    if given and Path(given).is_file():
+        return Path(given)
+
     if not session_id or not cwd:
         return None
 
@@ -313,8 +348,8 @@ def find_session_file(input_data: dict) -> Path | None:
     search_path = Path(cwd)
 
     for _ in range(10):
-        project_dir = str(search_path).replace("/", "-").lstrip("-")
-        candidate = Path(home) / ".claude" / "projects" / f"-{project_dir}" / f"{session_id}.jsonl"
+        project_dir = _project_dir_name(search_path)
+        candidate = Path(home) / ".claude" / "projects" / project_dir / f"{session_id}.jsonl"
         if candidate.exists():
             return candidate
         if search_path.parent == search_path:
@@ -329,8 +364,8 @@ def find_memory_dir(cwd: str) -> Path | None:
     search_path = Path(cwd)
 
     for _ in range(10):
-        project_dir = str(search_path).replace("/", "-").lstrip("-")
-        candidate = Path(home) / ".claude" / "projects" / f"-{project_dir}" / "memory"
+        project_dir = _project_dir_name(search_path)
+        candidate = Path(home) / ".claude" / "projects" / project_dir / "memory"
         if candidate.exists():
             return candidate
         if search_path.parent == search_path:
@@ -346,13 +381,21 @@ def main():
     except (json.JSONDecodeError, EOFError):
         input_data = {}
 
-    deadline = time.monotonic() + (HOOK_BUDGET_S - BUDGET_RESERVE_S)
+    if not isinstance(input_data, dict):
+        input_data = {}
 
-    # Drain the backlog before anything can early-return past it, so a short
-    # session still clears chunks parked during an earlier outage.
+    deadline = time.monotonic() + (HOOK_BUDGET_S - BUDGET_RESERVE_S)
+    _dead_letter_recover_stale_claims()
+
+    # Current session first, then the backlog with whatever budget is left, so a
+    # short session still clears chunks parked during an earlier outage.
+    _extract_current_session(input_data, deadline)
     _dead_letter_maintain()
     _dead_letter_drain(deadline)
+    # Output nothing — zero token cost to Claude
 
+
+def _extract_current_session(input_data: dict, deadline: float) -> None:
     session_file = find_session_file(input_data)
     if not session_file:
         return  # Silent exit
@@ -367,9 +410,11 @@ def main():
         return  # No memory dir found
 
     prompt = build_extraction_prompt(messages)
-    if not _extract_and_write(prompt, memory_dir, deadline):
-        _dead_letter_park(prompt, memory_dir, "extraction_failed")
-    # Output nothing — zero token cost to Claude
+    kind = _extract_and_write(prompt, memory_dir, deadline)
+    if kind and _is_retryable(kind):
+        _dead_letter_park(prompt, memory_dir, kind)
+    elif kind:
+        log_failure(f"extraction_dropped_permanent: {kind}")
 
 
 if __name__ == "__main__":

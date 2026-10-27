@@ -82,7 +82,7 @@ def main() -> int:
 
     # Debounce per session (falls back to cwd), so parallel sessions in one
     # folder do not silence each other.
-    session = str(data.get('session_id') or data.get('cwd') or os.getcwd())
+    session = str(data.get('sessionId') or data.get('session_id') or data.get('cwd') or os.getcwd())
     key = hashlib.sha256(session.encode()).hexdigest()[:16]
     debounce_file = os.path.join(STATE_DIR, 'design-focus-debounce-' + key)
     now = time.time()

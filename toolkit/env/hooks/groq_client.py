@@ -97,7 +97,13 @@ def _is_retryable(kind: str) -> bool:
     return any(m in kind for m in _RETRYABLE_MARKERS)
 
 
-def call_groq(
+def call_groq(prompt: str, *args, **kwargs) -> dict | None:
+    """Call Groq API with bounded retry. Returns parsed JSON dict or None.
+    Same arguments as call_groq_detailed()."""
+    return call_groq_detailed(prompt, *args, **kwargs)[0]
+
+
+def call_groq_detailed(
     prompt: str,
     model: str = DEFAULT_MODEL,
     max_tokens: int = 1000,
@@ -105,31 +111,33 @@ def call_groq(
     json_mode: bool = True,
     max_attempts: int = 3,
     deadline: float | None = None,
-) -> dict | None:
-    """Call Groq API with bounded retry. Returns parsed JSON dict or None.
+) -> tuple[dict | None, str]:
+    """Call Groq API with bounded retry. Returns (dict, "") or (None, failure_kind),
+    so callers can tell a retryable failure from a permanent one (_is_retryable).
 
     `timeout` bounds each attempt. `deadline` is a time.monotonic() timestamp
     for the whole call; without one the call makes a single attempt, so
-    `timeout` stays the overall bound. With one, transient failures (per
-    _is_retryable) retry up to max_attempts with ~2s/~6s jittered backoff, and a
-    retry is skipped when backoff plus another full attempt would overshoot it.
+    `timeout` stays the overall bound. With one, every attempt is also cut off
+    at the deadline, and transient failures (per _is_retryable) retry up to
+    max_attempts with ~2s/~6s jittered backoff; a retry is skipped when backoff
+    plus another full attempt would overshoot the deadline.
     """
     if deadline is None:
         max_attempts = 1
     attempt = 0
     while True:
         attempt += 1
-        result, kind = _call_groq_once(prompt, model, max_tokens, timeout, json_mode)
+        result, kind = _call_groq_once(prompt, model, max_tokens, timeout, json_mode, deadline)
         if result is not None:
-            return result
+            return result, ""
         if attempt >= max_attempts or not _is_retryable(kind):
             if attempt > 1:
                 log_failure(f"gave_up_after_{attempt}_attempts: {kind}")
-            return None
+            return None, kind
         backoff = (2.0 * (3 ** (attempt - 1))) * (0.75 + random.random() * 0.5)
         if time.monotonic() + backoff + timeout > deadline:
             log_failure(f"budget_exhausted_after_{attempt}_attempts: {kind}")
-            return None
+            return None, kind
         log_failure(f"retry_{attempt} after {kind}")
         time.sleep(backoff)
 
@@ -140,6 +148,7 @@ def _call_groq_once(
     max_tokens: int,
     timeout: float,
     json_mode: bool,
+    outer_deadline: float | None = None,
 ) -> tuple[dict | None, str]:
     """Single Groq API call. Returns (parsed JSON dict, "") or (None, failure_kind).
 
@@ -148,6 +157,8 @@ def _call_groq_once(
     Validates response structure before returning.
     """
     deadline = time.monotonic() + timeout
+    if outer_deadline is not None:
+        deadline = min(deadline, outer_deadline)
     api_key = _load_api_key()
     if not api_key:
         log_failure("no_api_key")

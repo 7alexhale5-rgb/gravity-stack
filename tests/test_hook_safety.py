@@ -5038,16 +5038,132 @@ class ConfigRefreshRegressionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with (mock.patch.object(module, "DEAD_LETTER_DIR", root / "dl"),
-                  mock.patch.object(module, "call_groq", return_value=None),
+                  mock.patch.object(module, "call_groq_detailed", return_value=(None, "rate_limit_exceeded")),
                   mock.patch.object(module, "log_failure")):
                 import time
-                self.assertFalse(module._extract_and_write("P", root, time.monotonic() + 30))
+                self.assertEqual(module._extract_and_write("P", root, time.monotonic() + 30),
+                                 "rate_limit_exceeded")
                 module._dead_letter_park("P", root, "extraction_failed")
                 parked = list((root / "dl").glob("*.json"))
                 self.assertEqual(len(parked), 1)
                 self.assertEqual(json.loads(parked[0].read_text())["prompt"], "P")
                 module._dead_letter_drain(time.monotonic() + 30)
                 self.assertEqual(len(list((root / "dl").glob("*.json"))), 1)
+
+
+
+class ReviewFixRegressionTests(unittest.TestCase):
+    """Fixes from the PR #7 review (F1 to F6)."""
+
+    def test_f1_single_call_never_outlives_the_outer_deadline(self):
+        import time
+        module = _load_hook("gravity_groq_f1", "groq_client.py")
+        body = {"choices": [{"message": {"content": "{}"}}]}
+        with (mock.patch.object(module, "_load_api_key", return_value="K"),
+              mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess(
+                  ["curl"], 0, json.dumps(body), "")) as run):
+            module.call_groq("P", timeout=6, deadline=time.monotonic() + 0.5)
+        self.assertLessEqual(run.call_args.kwargs["timeout"], 0.5)
+        argv = run.call_args.args[0]
+        self.assertLessEqual(float(argv[argv.index("--max-time") + 1]), 0.5)
+
+    def test_f1_current_session_is_extracted_before_the_backlog(self):
+        module = _load_hook("gravity_extract_f1", "extract_memories.py")
+        order = []
+        with tempfile.TemporaryDirectory() as directory:
+            with (mock.patch.object(module, "find_session_file", return_value=Path(directory) / "s.jsonl"),
+                  mock.patch.object(module, "parse_session_messages", return_value=["m"] * 9),
+                  mock.patch.object(module, "is_substantial_session", return_value=True),
+                  mock.patch.object(module, "find_memory_dir", return_value=Path(directory)),
+                  mock.patch.object(module, "build_extraction_prompt", return_value="P"),
+                  mock.patch.object(module, "_extract_and_write",
+                                    side_effect=lambda *a: order.append("current") or ""),
+                  mock.patch.object(module, "_dead_letter_drain",
+                                    side_effect=lambda *a: order.append("drain")),
+                  mock.patch.object(module, "DEAD_LETTER_DIR", Path(directory) / "dl"),
+                  mock.patch.object(sys, "stdin", io.StringIO("{}"))):
+                module.main()
+        self.assertEqual(order, ["current", "drain"])
+
+    def test_f1_no_replay_starts_without_time_for_a_full_call(self):
+        import time
+        module = _load_hook("gravity_extract_f1b", "extract_memories.py")
+        with tempfile.TemporaryDirectory() as directory:
+            dead = Path(directory) / "dl"
+            dead.mkdir()
+            (dead / "a.json").write_text(json.dumps({"prompt": "P", "memory_dir": directory}))
+            with (mock.patch.object(module, "DEAD_LETTER_DIR", dead),
+                  mock.patch.object(module, "_extract_and_write") as extract,
+                  mock.patch.object(module, "log_failure")):
+                module._dead_letter_drain(time.monotonic() + module.FULL_CALL_S - 1)
+                extract.assert_not_called()
+                module._dead_letter_drain(time.monotonic() + module.FULL_CALL_S + 1)
+                extract.assert_called_once()
+
+    def test_f3_context_counts_cache_creation_and_uses_the_counted_lines_model(self):
+        module = _load_hook("gravity_carl_f3", "carl-hook.py")
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "t.jsonl"
+            def pct(*lines):
+                transcript.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+                return module.get_context_percentage(
+                    {"session_id": "s", "cwd": directory, "transcript_path": str(transcript)})
+            self.assertEqual(pct({"message": {"model": "claude-sonnet-5-5", "usage": {
+                "input_tokens": 100, "cache_creation_input_tokens": 180000}}}), 82.0)
+            self.assertEqual(pct(
+                {"message": {"model": "claude-sonnet-5-5", "usage": {"input_tokens": 1000}}},
+                {"message": {"usage": {"input_tokens": 100, "cache_creation_input_tokens": 180000}}}), 10.0)
+
+    def test_f4_extract_memories_uses_carl_encoding_and_given_transcript(self):
+        carl = _load_hook("gravity_carl_f4", "carl-hook.py")
+        module = _load_hook("gravity_extract_f4", "extract_memories.py")
+        for path in ("/a b/c.d_e", "/Users/x/my_proj.v2"):
+            self.assertEqual(module._project_dir_name(path), carl._project_dir_name(path))
+        with tempfile.TemporaryDirectory() as directory:
+            given = Path(directory) / "given.jsonl"
+            given.write_text("")
+            self.assertEqual(module.find_session_file(
+                {"session_id": "s", "cwd": directory, "transcript_path": str(given)}), given)
+
+    def test_f5_stale_claims_recover_and_permanent_failures_are_dropped(self):
+        import time
+        module = _load_hook("gravity_extract_f5", "extract_memories.py")
+        with tempfile.TemporaryDirectory() as directory:
+            dead = Path(directory) / "dl"
+            dead.mkdir()
+            stale = dead / "old.claiming-999"
+            stale.write_text("{}")
+            os.utime(stale, (time.time() - 3600, time.time() - 3600))
+            fresh = dead / "new.claiming-998"
+            fresh.write_text("{}")
+            with mock.patch.object(module, "DEAD_LETTER_DIR", dead), \
+                 mock.patch.object(module, "log_failure"):
+                module._dead_letter_recover_stale_claims()
+            self.assertTrue((dead / "old.json").exists())
+            self.assertTrue(fresh.exists())
+            for f in dead.iterdir():
+                f.unlink()
+            for name in ("a", "b", "c"):
+                (dead / f"{name}.json").write_text(json.dumps({"prompt": name, "memory_dir": directory}))
+            kinds = iter(["model_not_found", "rate_limit_exceeded"])
+            with (mock.patch.object(module, "DEAD_LETTER_DIR", dead),
+                  mock.patch.object(module, "_extract_and_write", side_effect=lambda *a: next(kinds)),
+                  mock.patch.object(module, "log_failure") as log):
+                module._dead_letter_drain(time.monotonic() + 100)
+            self.assertEqual(sorted(f.name for f in dead.iterdir()), ["b.json", "c.json"])
+            self.assertIn("model_not_found", str(log.call_args_list))
+
+    def test_f6_design_debounce_keys_on_session_id_first(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, HOME=directory)
+            def run(payload):
+                return subprocess.run([sys.executable, str(HOOKS / "design-focus-redirect.py")],
+                                      input=json.dumps(payload), text=True, capture_output=True,
+                                      env=env, timeout=10).stdout
+            prompt = "build me a website please"
+            self.assertTrue(run({"sessionId": "A", "session_id": "B", "prompt": prompt}))
+            self.assertEqual(run({"sessionId": "A", "session_id": "C", "prompt": prompt}), "")
+            self.assertTrue(run({"session_id": "A2", "prompt": prompt}))
 
 
 if __name__ == "__main__":

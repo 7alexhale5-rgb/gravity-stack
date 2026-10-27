@@ -481,14 +481,17 @@ def get_context_percentage(input_data: dict) -> float | None:
                 message = data.get('message', {}) or {}
                 usage = message.get('usage', {})
                 if usage:
-                    input_tokens = usage.get('input_tokens', 0)
-                    cache_tokens = usage.get('cache_read_input_tokens', 0)
-                    tokens = input_tokens + cache_tokens
+                    tokens = sum(
+                        usage.get(field, 0) or 0
+                        for field in ('input_tokens', 'cache_read_input_tokens',
+                                      'cache_creation_input_tokens')
+                    )
                     if tokens > 0:
                         latest_tokens = tokens
-                        # Take the model from the SAME line as the token count,
-                        # so the denominator always matches what produced it.
-                        latest_model = message.get('model') or latest_model
+                        # Take the model only from the SAME line as the token
+                        # count, so the denominator matches what produced it. No
+                        # model there means the conservative unknown-model window.
+                        latest_model = message.get('model')
             except json.JSONDecodeError:
                 continue
 
