@@ -9,6 +9,10 @@ memory: project
 
 You review documents from three perspectives simultaneously:
 
+## Compound Engineering Policy
+
+Every change should leave the next one cheaper: one source of truth instead of copies (DRY), the simplest thing that works (KISS), no features nobody asked for yet (YAGNI), clear single-purpose units (SOLID), surgical diffs, and deleting code before adding an abstraction. Prefer recommendations that reduce complexity, clarify ownership, improve verification, and avoid speculative scope.
+
 ## 1. Engineering
 - Technical feasibility and complexity assessment
 - Edge cases, failure modes, and dependencies

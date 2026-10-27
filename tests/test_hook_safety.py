@@ -4943,5 +4943,112 @@ class Review53Getopts(unittest.TestCase):
                 with self.subTest(program=program,hook=hook):self.assertFalse(self.command(hook,program)[1])
 
 
+
+def _load_hook(name, filename):
+    spec = importlib.util.spec_from_file_location(name, HOOKS / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class ConfigRefreshRegressionTests(unittest.TestCase):
+    """Behavior ported from the live config on 2026-10-26."""
+
+    def test_groq_retries_only_transient_failures_inside_a_deadline(self):
+        module = _load_hook("gravity_groq_retry", "groq_client.py")
+        for kind, expected in (("rate_limit_exceeded", True), ("transport_exit_28", True),
+                               ("transport_timeout", True), ("model_not_found", False),
+                               ("rate_limit_exceeded_request_too_large", False),
+                               ("transport_exit_22", False), ("no_api_key", False)):
+            with self.subTest(kind=kind):
+                self.assertEqual(module._is_retryable(kind), expected)
+        import time
+        with (mock.patch.object(module, "_call_groq_once",
+                                side_effect=[(None, "rate_limit_exceeded"), ({"ok": True}, "")]) as once,
+              mock.patch.object(module.time, "sleep"), mock.patch.object(module, "log_failure")):
+            self.assertEqual(module.call_groq("P", deadline=time.monotonic() + 100), {"ok": True})
+        self.assertEqual(once.call_count, 2)
+        with (mock.patch.object(module, "_call_groq_once", return_value=(None, "rate_limit_exceeded")) as once,
+              mock.patch.object(module, "log_failure")):
+            self.assertIsNone(module.call_groq("P"))
+        self.assertEqual(once.call_count, 1)
+
+    def test_groq_names_api_error_kind_without_logging_the_body(self):
+        module = _load_hook("gravity_groq_kind", "groq_client.py")
+        body = {"error": {"code": "model_not_found", "message": "AUDIT_DUMMY_PROMPT gone"}}
+        with (mock.patch.object(module, "_load_api_key", return_value="AUDIT_DUMMY_KEY"),
+              mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess(
+                  ["curl"], 0, json.dumps(body), "")),
+              mock.patch.object(module, "log_failure") as log):
+            self.assertEqual(module._call_groq_once("AUDIT_DUMMY_PROMPT", "m", 10, 5, True),
+                             (None, "model_not_found"))
+        self.assertNotIn("AUDIT_DUMMY", str(log.call_args_list))
+
+    def test_token_budget_uses_the_model_window(self):
+        module = _load_hook("gravity_token_budget", "token_budget.py")
+        self.assertEqual(module.context_window_for_model("claude-haiku-4-5"), 200_000)
+        self.assertEqual(module.context_window_for_model("claude-haiku-5-5"), 1_000_000)
+        self.assertEqual(module.context_window_for_model("claude-sonnet-5-5"), 1_000_000)
+        self.assertEqual(module.context_window_for_model("unknown-model"), 200_000)
+        self.assertIn("of 200K tokens left", module.format_bracket("FRESH", 50, 200_000))
+
+    def test_carl_strips_untyped_text_and_keeps_file_rule_numbers(self):
+        module = _load_hook("gravity_carl_refresh", "carl-hook.py")
+        self.assertEqual(module._project_dir_name("/a b/c.d_e"), "-a-b-c-d-e")
+        text, removed = module.typed_text("hi <task-notification>build</task-notification>\n> quoted")
+        self.assertEqual(removed, 2)
+        self.assertNotIn("build", text)
+        rules = module.parse_domain_rules(ROOT / "toolkit/env/carl/global", "GLOBAL")
+        self.assertIn("7", [n for n, _ in rules])
+        self.assertNotIn("5", [n for n, _ in rules])
+
+    def test_carl_size_cap_drops_matched_domains_and_says_so(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            carl = root / "proj" / ".carl"
+            carl.mkdir(parents=True)
+            (carl / "manifest").write_text(
+                "GLOBAL_STATE=active\nGLOBAL_ALWAYS_ON=true\n"
+                "BIG_STATE=active\nBIG_RECALL=zebra\n")
+            (carl / "global").write_text("GLOBAL_RULE_1=keep\n")
+            (carl / "big").write_text("".join(f"BIG_RULE_{i}={'x' * 200}\n" for i in range(80)))
+            env = dict(os.environ, HOME=str(root), CARL_TYPED_TEXT_LOG=str(root / "log"))
+            result = subprocess.run(
+                [sys.executable, str(HOOKS / "carl-hook.py")],
+                input=json.dumps({"session_id": "s", "cwd": str(root / "proj"), "prompt": "zebra"}),
+                text=True, capture_output=True, env=env, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertLess(len(result.stdout), 10_000)
+            context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("dropped to stay under", context)
+            self.assertIn("1. keep", context)
+
+    def test_design_focus_nudge_reaches_the_model_once_per_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, HOME=directory)
+            payload = json.dumps({"session_id": "s1", "prompt": "build me a website please"})
+            runs = [subprocess.run([sys.executable, str(HOOKS / "design-focus-redirect.py")],
+                                   input=payload, text=True, capture_output=True, env=env, timeout=10)
+                    for _ in range(2)]
+        self.assertIn("/design-stack", json.loads(runs[0].stdout)["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual(runs[1].stdout, "")
+
+    def test_extract_memories_parks_a_failed_chunk_instead_of_dropping_it(self):
+        module = _load_hook("gravity_extract_refresh", "extract_memories.py")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (mock.patch.object(module, "DEAD_LETTER_DIR", root / "dl"),
+                  mock.patch.object(module, "call_groq", return_value=None),
+                  mock.patch.object(module, "log_failure")):
+                import time
+                self.assertFalse(module._extract_and_write("P", root, time.monotonic() + 30))
+                module._dead_letter_park("P", root, "extraction_failed")
+                parked = list((root / "dl").glob("*.json"))
+                self.assertEqual(len(parked), 1)
+                self.assertEqual(json.loads(parked[0].read_text())["prompt"], "P")
+                module._dead_letter_drain(time.monotonic() + 30)
+                self.assertEqual(len(list((root / "dl").glob("*.json"))), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

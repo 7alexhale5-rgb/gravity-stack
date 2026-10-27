@@ -13,6 +13,8 @@ What gets injected:
 3. ALWAYS_ON domain rules - every prompt when {DOMAIN}_ALWAYS_ON=true
 4. Matched domain rules - when recall keywords found in user prompt
 5. Domain summary showing what was loaded and why
+6. Size cap: if the block would reach CARL_MAX_CHARS, keyword-matched domains are dropped
+   last-matched-first (always-on rules are never dropped) with a one-line note
 
 Exclusion support:
 - GLOBAL_EXCLUDE=word1,word2 - if any found, skip ALL domain matching
@@ -21,6 +23,7 @@ Exclusion support:
 This replaces the passive manifest approach with active keyword detection.
 """
 import json
+import os
 import sys
 import re
 import subprocess
@@ -30,9 +33,16 @@ from datetime import datetime, timedelta
 
 CARL_FOLDER = '.carl'
 SESSIONS_FOLDER = 'sessions'
-MAX_CONTEXT = 1000000  # Opus 4.6 with 1M context window
+# Context windows are model-dependent and the rule lives in token_budget.py.
+# Do NOT re-add a hardcoded window here. This name is only the fallback for the
+# import failing; real computations go through token_budget.context_window_for_model().
+MAX_CONTEXT = 1000000
 STALE_SESSION_HOURS = 24  # Cleanup sessions older than this
 DEBUG = False  # Set to True to log to stderr
+# Claude Code writes hook output over 10KB to disk and shows the model only a short
+# preview, so a block that big is mostly unread. The cap counts the JSON this hook
+# prints, the stricter way to count it.
+CARL_MAX_CHARS = 10000
 
 
 def debug_log(msg: str):
@@ -235,6 +245,13 @@ def merge_manifest_with_session(
     return merged_domains, global_exclude, effective_devmode
 
 
+def _project_dir_name(path) -> str:
+    """Claude Code's transcript folder name for a working folder: every character that
+    is not a letter or digit becomes '-'. Swapping only '/' missed every folder with a
+    space, dot or underscore, so the bracket read 'context unknown' and assumed FRESH."""
+    return re.sub(r'[^A-Za-z0-9]', '-', str(path))
+
+
 def generate_title_from_transcript(session_id: str, cwd: str) -> str | None:
     """
     Generate a session title from the first user message in the transcript.
@@ -299,8 +316,8 @@ def generate_title_from_transcript(session_id: str, cwd: str) -> str | None:
 
         for _ in range(10):
             # Convert path to Claude's project directory format
-            project_dir = str(search_path).replace('/', '-').lstrip('-')
-            candidate = home / '.claude' / 'projects' / f'-{project_dir}' / f'{session_id}.jsonl'
+            project_dir = _project_dir_name(search_path)
+            candidate = home / '.claude' / 'projects' / project_dir / f'{session_id}.jsonl'
             if candidate.exists():
                 transcript_file = candidate
                 break
@@ -397,6 +414,21 @@ def get_or_create_session(carl_path: Path, session_id: str, cwd: str) -> dict | 
 # CONTEXT PERCENTAGE AND BRACKET
 # =============================================================================
 
+# Window resolved by the most recent get_context_percentage() call, so the
+# display line can report the real total ("of 200K") instead of assuming 1M.
+LAST_CONTEXT_WINDOW: int | None = None
+
+
+def _context_window(model: str | None) -> int:
+    """Context window for `model`, from the single source in token_budget.py."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from token_budget import context_window_for_model
+        return context_window_for_model(model)
+    except Exception:
+        return MAX_CONTEXT
+
+
 def get_context_percentage(input_data: dict) -> float | None:
     """
     Get current context percentage remaining by reading session JSONL file.
@@ -415,14 +447,19 @@ def get_context_percentage(input_data: dict) -> float | None:
     session_file = None
 
     for _ in range(10):  # Max 10 levels up
-        project_dir = str(search_path).replace('/', '-').lstrip('-')
-        candidate = Path(home) / '.claude' / 'projects' / f'-{project_dir}' / f'{session_id}.jsonl'
+        project_dir = _project_dir_name(search_path)
+        candidate = Path(home) / '.claude' / 'projects' / project_dir / f'{session_id}.jsonl'
         if candidate.exists():
             session_file = candidate
             break
         if search_path.parent == search_path:  # Hit root
             break
         search_path = search_path.parent
+
+    # The hook input names the transcript directly; prefer it over the rebuilt path.
+    given = input_data.get('transcript_path')
+    if given and Path(given).is_file():
+        session_file = Path(given)
 
     if session_file is None:
         return None
@@ -435,23 +472,33 @@ def get_context_percentage(input_data: dict) -> float | None:
         )
 
         latest_tokens = 0
+        latest_model = None
         for line in result.stdout.strip().split('\n'):
             if not line:
                 continue
             try:
                 data = json.loads(line)
-                usage = data.get('message', {}).get('usage', {})
+                message = data.get('message', {}) or {}
+                usage = message.get('usage', {})
                 if usage:
                     input_tokens = usage.get('input_tokens', 0)
                     cache_tokens = usage.get('cache_read_input_tokens', 0)
                     tokens = input_tokens + cache_tokens
                     if tokens > 0:
                         latest_tokens = tokens
+                        # Take the model from the SAME line as the token count,
+                        # so the denominator always matches what produced it.
+                        latest_model = message.get('model') or latest_model
             except json.JSONDecodeError:
                 continue
 
         if latest_tokens > 0:
-            context_remaining = 100 - (latest_tokens * 100 // MAX_CONTEXT)
+            # The window is the denominator: a wrong one silently reports
+            # FRESH on a nearly-full 200K session.
+            global LAST_CONTEXT_WINDOW
+            window = _context_window(latest_model)
+            LAST_CONTEXT_WINDOW = window
+            context_remaining = 100 - (latest_tokens * 100 // window)
             return float(max(0, context_remaining))
 
     except Exception:
@@ -468,8 +515,9 @@ def get_active_bracket(context_remaining: float | None) -> str:
     if context_remaining is None:
         return "FRESH"  # Default for fresh/unknown sessions
 
-    # Thresholds calibrated for 1M context (Opus 4.6)
-    # With 1M, 15% remaining is still ~150K tokens
+    # Thresholds are percentages, so they hold for any window size. The window
+    # itself is resolved per model in token_budget.context_window_for_model().
+    # 15% of 1M is ~150K; of 200K it is ~30K.
     if context_remaining >= 80:
         return "FRESH"
     elif context_remaining >= 50:
@@ -480,12 +528,13 @@ def get_active_bracket(context_remaining: float | None) -> str:
         return "CRITICAL"
 
 
-def parse_context_file(context_path: Path) -> tuple[dict[str, bool], dict[str, list[str]]]:
+def parse_context_file(context_path: Path) -> tuple[dict[str, bool], dict[str, list[tuple[str, str]]]]:
     """
     Parse .carl/context file for bracket rules.
     Returns (bracket_flags, bracket_rules) where:
     - bracket_flags: {BRACKET: enabled_bool}
-    - bracket_rules: {BRACKET: [rule1, rule2, ...]}
+    - bracket_rules: {BRACKET: [(N, rule), ...]}, N from {BRACKET}_RULE_{N}, so the injected
+      list shows file numbers, not positions
     """
     bracket_flags = {}
     bracket_rules = {}
@@ -515,7 +564,7 @@ def parse_context_file(context_path: Path) -> tuple[dict[str, bool], dict[str, l
             bracket_name = key.split('_RULE_')[0]
             if bracket_name not in bracket_rules:
                 bracket_rules[bracket_name] = []
-            bracket_rules[bracket_name].append(value)
+            bracket_rules[bracket_name].append((key.split('_RULE_')[1], value))
 
     return bracket_flags, bracket_rules
 
@@ -619,10 +668,11 @@ def parse_manifest(manifest_path: Path) -> tuple[dict, list[str], bool]:
     return domains, global_exclude, devmode
 
 
-def parse_domain_rules(domain_path: Path, domain_name: str) -> list[str]:
+def parse_domain_rules(domain_path: Path, domain_name: str) -> list[tuple[str, str]]:
     """
     Parse a domain file and extract its rules.
-    Returns list of rule strings.
+    Returns [(N, rule text)], N from {DOMAIN}_RULE_{N}. The injected list prints N, so
+    GLOBAL_RULE_4 shows as 4 even after earlier rules are removed.
     """
     rules = []
 
@@ -644,7 +694,7 @@ def parse_domain_rules(domain_path: Path, domain_name: str) -> list[str]:
         value = value.strip()
 
         if key.startswith(prefix) and value:
-            rules.append(value)
+            rules.append((key[len(prefix):], value))
 
     return rules
 
@@ -694,6 +744,40 @@ def parse_command_rules(commands_path: Path, command_names: list[str]) -> dict[s
             command_rules[command] = rules
 
     return command_rules
+
+
+# Text the user did not type: desktop-app paste blocks, harness notices, subagent
+# hand-backs, fenced code and quoted lines. Recall keywords are matched only against
+# what is left, so a pasted handoff or a background-task notice does not load domains
+# the same ask typed in one line would not.
+_NOT_TYPED = (
+    re.compile(r"<(pasted_content|task-notification|agent-message|system-reminder)\b[^>]*>.*?</\1[^>]*>", re.S),
+    re.compile(r"```.*?```", re.S),
+    re.compile(r"(?m)^[ \t]*>.*$"),
+)
+
+
+def typed_text(prompt: str) -> tuple[str, int]:
+    """Return the prompt minus text the user did not type, and how many blocks were removed."""
+    removed = 0
+    for pattern in _NOT_TYPED:
+        prompt, n = pattern.subn(" ", prompt)
+        removed += n
+    return prompt, removed
+
+
+def log_typed_text(session_id: str, removed: int, before: int, after: int) -> None:
+    """One line of counts per stripped prompt, never content. Never raises."""
+    try:
+        path = Path(os.environ.get("CARL_TYPED_TEXT_LOG")
+                    or Path.home() / ".claude" / "logs" / "carl-typed-text.log")
+        ts = datetime.now().astimezone().isoformat(timespec="seconds")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": ts, "session": session_id[:8], "blocks_removed": removed,
+                                 "chars_before": before, "chars_after": after}) + "\n")
+    except Exception:
+        pass
 
 
 def check_exclusions(prompt_lower: str, exclude_list: list[str]) -> list[str]:
@@ -752,8 +836,12 @@ def match_domains_to_prompt(
         # Check each keyword
         domain_matches = []
         for keyword in recall_list:
-            # Use word boundary matching for better accuracy
+            # Word boundaries for short single-word keywords prevent over-matching
+            # ("agent" inside "agentic", "build" inside "builder"). Multi-word
+            # phrases and longer keywords keep substring matching.
             pattern = re.escape(keyword)
+            if len(keyword) <= 6 and re.match(r'^\w+$', keyword):
+                pattern = r'\b' + pattern + r'\b'
             if re.search(pattern, prompt_lower):
                 domain_matches.append(keyword)
 
@@ -766,19 +854,20 @@ def match_domains_to_prompt(
 
 def format_output(
     domains: dict,
-    always_on_rules: dict[str, list[str]],
-    matched_rules: dict[str, list[str]],
+    always_on_rules: dict[str, list[tuple[str, str]]],
+    matched_rules: dict[str, list[tuple[str, str]]],
     matched_keywords: dict[str, list[str]],
     excluded_domains: dict[str, list[str]],
     global_excluded: list[str],
     devmode: bool,
     bracket: str = "FRESH",
     context_remaining: float | None = None,
-    bracket_rules: list[str] | None = None,
+    bracket_rules: list[tuple[str, str]] | None = None,
     command_rules: dict[str, list[str]] | None = None,
     global_disabled: bool = False,
     domains_with_files: set[str] | None = None,
-    context_enabled: bool = True
+    context_enabled: bool = True,
+    dropped_for_size: list[str] | None = None
 ) -> str:
     """
     Format the injected rules as XML context block.
@@ -790,7 +879,9 @@ def format_output(
         # TOKEN_BUDGET: Enhanced bracket display with actual token counts
         try:
             from token_budget import format_bracket, get_budget_warning
-            bracket_display = format_bracket(bracket, context_remaining)
+            bracket_display = format_bracket(
+                bracket, context_remaining, LAST_CONTEXT_WINDOW
+            )
             budget_warning = get_budget_warning(context_remaining)
         except ImportError:
             bracket_display = f"[{bracket}] ({context_remaining:.0f}% remaining)" if context_remaining is not None else f"[{bracket}] (fresh session)"
@@ -810,8 +901,8 @@ def format_output(
         # Bracket-specific rules
         if bracket_rules:
             output += f"\n[{bracket}] CONTEXT RULES:\n"
-            for i, rule in enumerate(bracket_rules, 1):
-                output += f"  {i}. {rule}\n"
+            for n, rule in bracket_rules:
+                output += f"  {n}. {rule}\n"
 
         output += "\n"
 
@@ -827,7 +918,7 @@ def format_output(
             output += "\n"
         output += "="*60 + "\n\n"
 
-    # DEVMODE instruction - ALWAYS EXPLICIT (both true AND false states)
+    # DEVMODE instruction - only emitted when devmode is on
     if devmode:
         output += "⚠️ DEVMODE=true ⚠️\n"
         output += "="*60 + "\n"
@@ -846,10 +937,8 @@ def format_output(
         output += "```\n"
         output += "---\n"
         output += "="*60 + "\n\n"
-    else:
-        output += "🚫 DEVMODE=false 🚫\n"
-        output += "User has DISABLED debug output. Do NOT append any CARL DEVMODE\n"
-        output += "debug section to your responses. Respond normally without debug blocks.\n\n"
+    # DEVMODE=false: emit nothing. Without the true-state instruction there is no
+    # debug section to suppress, so the off-state text only cost context.
 
     # GLOBAL domain disabled - explicit instruction to not apply from memory
     if global_disabled:
@@ -878,6 +967,10 @@ def format_output(
         output += f"\nGLOBAL EXCLUSION ACTIVE: {', '.join(global_excluded)}\n"
         output += "  (All domain matching skipped)\n"
 
+    if dropped_for_size:
+        output += (f"  (dropped to stay under {CARL_MAX_CHARS:,} chars: "
+                   f"{', '.join(dropped_for_size)}; rules are in ~/.carl/<domain>)\n")
+
     if excluded_domains:
         output += "\nEXCLUDED DOMAINS:\n"
         for domain, exclusions in excluded_domains.items():
@@ -886,14 +979,14 @@ def format_output(
     # ALWAYS_ON domain rules
     for domain, rules in always_on_rules.items():
         output += f"\n[{domain}] RULES:\n"
-        for i, rule in enumerate(rules):
-            output += f"  {i}. {rule}\n"
+        for n, rule in rules:
+            output += f"  {n}. {rule}\n"
 
     # Matched domain rules
     for domain, rules in matched_rules.items():
         output += f"\n[{domain}] RULES:\n"
-        for i, rule in enumerate(rules):
-            output += f"  {i}. {rule}\n"
+        for n, rule in rules:
+            output += f"  {n}. {rule}\n"
 
     # Available domains not loaded (only show if domain file exists)
     unloaded = []
@@ -925,6 +1018,11 @@ def main():
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON input: {e}", file=sys.stderr)
         sys.exit(1)
+
+    # Kill switch: set CARL_DISABLE=1 to skip injection (for example, to measure a
+    # baseline without CARL rules). Unset it to restore normal behavior.
+    if os.environ.get("CARL_DISABLE") == "1":
+        sys.exit(0)
 
     # Get working directory from hook input
     cwd = input_data.get('cwd', str(Path.home()))
@@ -1035,8 +1133,11 @@ def main():
     global_excluded = []
 
     if user_prompt:
+        match_text, removed = typed_text(user_prompt)
+        if removed:
+            log_typed_text(session_id, removed, len(user_prompt), len(match_text))
         matched_keywords, excluded_domains, global_excluded = match_domains_to_prompt(
-            domains, user_prompt, global_exclude
+            domains, match_text, global_exclude
         )
 
         # Load rules for matched domains (skip COMMANDS - handled separately)
@@ -1055,30 +1156,42 @@ def main():
     # Build set of domain files that exist (lowercase for matching)
     domains_with_files = {name.lower() for name in carl_files.keys() if name != 'manifest' and name != 'context'}
 
-    # Format output
-    context = format_output(
-        domains,
-        always_on_rules,
-        matched_rules,
-        matched_keywords,
-        excluded_domains,
-        global_excluded,
-        devmode,
-        bracket,
-        context_remaining,
-        bracket_rules_list,
-        command_rules,
-        global_disabled,
-        domains_with_files,
-        context_enabled
-    )
+    # Format output. If the block would reach the cap, drop keyword-matched domains, last
+    # matched first, until it fits. Always-on rules are never dropped.
+    dropped_for_size: list[str] = []
 
-    output = {
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": context
+    def build_output() -> dict:
+        context = format_output(
+            domains,
+            always_on_rules,
+            matched_rules,
+            matched_keywords,
+            excluded_domains,
+            global_excluded,
+            devmode,
+            bracket,
+            context_remaining,
+            bracket_rules_list,
+            command_rules,
+            global_disabled,
+            domains_with_files,
+            context_enabled,
+            dropped_for_size
+        )
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": context
+            }
         }
-    }
+
+    output = build_output()
+    while matched_rules and len(json.dumps(output)) >= CARL_MAX_CHARS:
+        last = list(matched_rules)[-1]
+        del matched_rules[last]
+        matched_keywords.pop(last, None)
+        dropped_for_size.append(last)
+        output = build_output()
 
     print(json.dumps(output))
     sys.exit(0)
