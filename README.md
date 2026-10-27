@@ -27,16 +27,16 @@ Every configuration in this repo is either my actual working config or a sanitiz
 
 ## Current models
 
-Checked against Anthropic's models overview on 2026-09-29.
+Checked against Anthropic's models overview on 2026-09-29; Haiku 5.5 added 2026-10-26.
 
 | Model             | ID                  | Use it for                           |
 | ----------------- | ------------------- | ------------------------------------ |
 | Claude Fable 5.1  | `claude-fable-5-1`  | Hardest reasoning, long agentic work |
 | Claude Opus 5.5   | `claude-opus-5-5`   | Default for most work                |
 | Claude Sonnet 5.5 | `claude-sonnet-5-5` | Speed and intelligence               |
-| Claude Haiku 4.5  | `claude-haiku-4-5`  | Fastest                              |
+| Claude Haiku 5.5  | `claude-haiku-5-5`  | Fastest                              |
 
-Legacy: Opus 4.8, 4.7, 4.6, 4.5, Opus 5, Fable 5, Sonnet 5, 4.6, 4.5. The Opus 4.7 pages in this repo are kept as history.
+Legacy: Opus 4.8, 4.7, 4.6, 4.5, Opus 5, Fable 5, Sonnet 5, 4.6, 4.5, Haiku 4.5. The Opus 4.7 pages in this repo are kept as history.
 
 ## Development process
 

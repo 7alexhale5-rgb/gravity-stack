@@ -4943,5 +4943,289 @@ class Review53Getopts(unittest.TestCase):
                 with self.subTest(program=program,hook=hook):self.assertFalse(self.command(hook,program)[1])
 
 
+
+def _load_hook(name, filename):
+    spec = importlib.util.spec_from_file_location(name, HOOKS / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class ConfigRefreshRegressionTests(unittest.TestCase):
+    """Behavior ported from the live config on 2026-10-26."""
+
+    def test_groq_retries_only_transient_failures_inside_a_deadline(self):
+        module = _load_hook("gravity_groq_retry", "groq_client.py")
+        for kind, expected in (("rate_limit_exceeded", True), ("transport_exit_28", True),
+                               ("transport_timeout", True), ("model_not_found", False),
+                               ("rate_limit_exceeded_request_too_large", False),
+                               ("transport_exit_22", False), ("no_api_key", False)):
+            with self.subTest(kind=kind):
+                self.assertEqual(module._is_retryable(kind), expected)
+        import time
+        with (mock.patch.object(module, "_call_groq_once",
+                                side_effect=[(None, "rate_limit_exceeded"), ({"ok": True}, "")]) as once,
+              mock.patch.object(module.time, "sleep"), mock.patch.object(module, "log_failure")):
+            self.assertEqual(module.call_groq("P", deadline=time.monotonic() + 100), {"ok": True})
+        self.assertEqual(once.call_count, 2)
+        with (mock.patch.object(module, "_call_groq_once", return_value=(None, "rate_limit_exceeded")) as once,
+              mock.patch.object(module, "log_failure")):
+            self.assertIsNone(module.call_groq("P"))
+        self.assertEqual(once.call_count, 1)
+
+    def test_groq_names_api_error_kind_without_logging_the_body(self):
+        module = _load_hook("gravity_groq_kind", "groq_client.py")
+        body = {"error": {"code": "model_not_found", "message": "AUDIT_DUMMY_PROMPT gone"}}
+        with (mock.patch.object(module, "_load_api_key", return_value="AUDIT_DUMMY_KEY"),
+              mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess(
+                  ["curl"], 0, json.dumps(body), "")),
+              mock.patch.object(module, "log_failure") as log):
+            self.assertEqual(module._call_groq_once("AUDIT_DUMMY_PROMPT", "m", 10, 5, True),
+                             (None, "model_not_found"))
+        self.assertNotIn("AUDIT_DUMMY", str(log.call_args_list))
+
+    def test_token_budget_uses_the_model_window(self):
+        module = _load_hook("gravity_token_budget", "token_budget.py")
+        self.assertEqual(module.context_window_for_model("claude-haiku-4-5"), 200_000)
+        self.assertEqual(module.context_window_for_model("claude-haiku-5-5"), 1_000_000)
+        self.assertEqual(module.context_window_for_model("claude-sonnet-5-5"), 1_000_000)
+        self.assertEqual(module.context_window_for_model("unknown-model"), 200_000)
+        self.assertIn("of 200K tokens left", module.format_bracket("FRESH", 50, 200_000))
+
+    def test_carl_strips_untyped_text_and_keeps_file_rule_numbers(self):
+        module = _load_hook("gravity_carl_refresh", "carl-hook.py")
+        self.assertEqual(module._project_dir_name("/a b/c.d_e"), "-a-b-c-d-e")
+        text, removed = module.typed_text("hi <task-notification>build</task-notification>\n> quoted")
+        self.assertEqual(removed, 2)
+        self.assertNotIn("build", text)
+        rules = module.parse_domain_rules(ROOT / "toolkit/env/carl/global", "GLOBAL")
+        self.assertIn("7", [n for n, _ in rules])
+        self.assertNotIn("5", [n for n, _ in rules])
+
+    def test_carl_size_cap_drops_matched_domains_and_says_so(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            carl = root / "proj" / ".carl"
+            carl.mkdir(parents=True)
+            (carl / "manifest").write_text(
+                "GLOBAL_STATE=active\nGLOBAL_ALWAYS_ON=true\n"
+                "BIG_STATE=active\nBIG_RECALL=zebra\n")
+            (carl / "global").write_text("GLOBAL_RULE_1=keep\n")
+            (carl / "big").write_text("".join(f"BIG_RULE_{i}={'x' * 200}\n" for i in range(80)))
+            env = dict(os.environ, HOME=str(root), CARL_TYPED_TEXT_LOG=str(root / "log"))
+            result = subprocess.run(
+                [sys.executable, str(HOOKS / "carl-hook.py")],
+                input=json.dumps({"session_id": "s", "cwd": str(root / "proj"), "prompt": "zebra"}),
+                text=True, capture_output=True, env=env, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertLess(len(result.stdout), 10_000)
+            context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("dropped to stay under", context)
+            self.assertIn("1. keep", context)
+
+    def test_design_focus_nudge_reaches_the_model_once_per_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, HOME=directory)
+            payload = json.dumps({"session_id": "s1", "prompt": "build me a website please"})
+            runs = [subprocess.run([sys.executable, str(HOOKS / "design-focus-redirect.py")],
+                                   input=payload, text=True, capture_output=True, env=env, timeout=10)
+                    for _ in range(2)]
+        self.assertIn("/design-stack", json.loads(runs[0].stdout)["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual(runs[1].stdout, "")
+
+    def test_extract_memories_parks_a_failed_chunk_instead_of_dropping_it(self):
+        module = _load_hook("gravity_extract_refresh", "extract_memories.py")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (mock.patch.object(module, "DEAD_LETTER_DIR", root / "dl"),
+                  mock.patch.object(module, "call_groq_detailed", return_value=(None, "rate_limit_exceeded")),
+                  mock.patch.object(module, "log_failure")):
+                import time
+                self.assertEqual(module._extract_and_write("P", root, time.monotonic() + 30),
+                                 "rate_limit_exceeded")
+                module._dead_letter_park("P", root, "extraction_failed")
+                parked = list((root / "dl").glob("*.json"))
+                self.assertEqual(len(parked), 1)
+                self.assertEqual(json.loads(parked[0].read_text())["prompt"], "P")
+                module._dead_letter_drain(time.monotonic() + 30)
+                self.assertEqual(len(list((root / "dl").glob("*.json"))), 1)
+
+
+
+class ReviewFixRegressionTests(unittest.TestCase):
+    """Fixes from the PR #7 review (F1 to F6)."""
+
+    def test_f1_single_call_never_outlives_the_outer_deadline(self):
+        import time
+        module = _load_hook("gravity_groq_f1", "groq_client.py")
+        body = {"choices": [{"message": {"content": "{}"}}]}
+        with (mock.patch.object(module, "_load_api_key", return_value="K"),
+              mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess(
+                  ["curl"], 0, json.dumps(body), "")) as run):
+            module.call_groq("P", timeout=6, deadline=time.monotonic() + 0.5)
+        self.assertLessEqual(run.call_args.kwargs["timeout"], 0.5)
+        argv = run.call_args.args[0]
+        self.assertLessEqual(float(argv[argv.index("--max-time") + 1]), 0.5)
+
+    def test_f1_current_session_is_extracted_before_the_backlog(self):
+        module = _load_hook("gravity_extract_f1", "extract_memories.py")
+        order = []
+        with tempfile.TemporaryDirectory() as directory:
+            with (mock.patch.object(module, "find_session_file", return_value=Path(directory) / "s.jsonl"),
+                  mock.patch.object(module, "parse_session_messages", return_value=["m"] * 9),
+                  mock.patch.object(module, "is_substantial_session", return_value=True),
+                  mock.patch.object(module, "find_memory_dir", return_value=Path(directory)),
+                  mock.patch.object(module, "build_extraction_prompt", return_value="P"),
+                  mock.patch.object(module, "_extract_and_write",
+                                    side_effect=lambda *a: order.append("current") or ""),
+                  mock.patch.object(module, "_dead_letter_drain",
+                                    side_effect=lambda *a: order.append("drain")),
+                  mock.patch.object(module, "DEAD_LETTER_DIR", Path(directory) / "dl"),
+                  mock.patch.object(sys, "stdin", io.StringIO("{}"))):
+                module.main()
+        self.assertEqual(order, ["current", "drain"])
+
+    def test_f1_no_replay_starts_without_time_for_a_full_call(self):
+        import time
+        module = _load_hook("gravity_extract_f1b", "extract_memories.py")
+        with tempfile.TemporaryDirectory() as directory:
+            dead = Path(directory) / "dl"
+            dead.mkdir()
+            (dead / "a.json").write_text(json.dumps({"prompt": "P", "memory_dir": directory}))
+            with (mock.patch.object(module, "DEAD_LETTER_DIR", dead),
+                  mock.patch.object(module, "_extract_and_write") as extract,
+                  mock.patch.object(module, "log_failure")):
+                module._dead_letter_drain(time.monotonic() + module.FULL_CALL_S - 1)
+                extract.assert_not_called()
+                module._dead_letter_drain(time.monotonic() + module.FULL_CALL_S + 1)
+                extract.assert_called_once()
+
+    def test_f3_context_counts_cache_creation_and_keeps_the_last_seen_model(self):
+        module = _load_hook("gravity_carl_f3", "carl-hook.py")
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "t.jsonl"
+            def pct(*lines):
+                transcript.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+                return module.get_context_percentage(
+                    {"session_id": "s", "cwd": directory, "transcript_path": str(transcript)})
+            big = {"usage": {"input_tokens": 100, "cache_creation_input_tokens": 180000}}
+            self.assertEqual(pct({"message": dict(big, model="claude-sonnet-5-5")}), 82.0)
+            # A later usage line with no model keeps the model seen earlier.
+            self.assertEqual(pct(
+                {"message": {"model": "claude-sonnet-5-5", "usage": {"input_tokens": 1000}}},
+                {"message": big}), 82.0)
+            # No line carries a model: the conservative unknown-model window.
+            self.assertEqual(pct({"message": big}), 10.0)
+
+    def test_f4_extract_memories_uses_carl_encoding_and_given_transcript(self):
+        carl = _load_hook("gravity_carl_f4", "carl-hook.py")
+        module = _load_hook("gravity_extract_f4", "extract_memories.py")
+        for path in ("/a b/c.d_e", "/Users/x/my_proj.v2"):
+            self.assertEqual(module._project_dir_name(path), carl._project_dir_name(path))
+        with tempfile.TemporaryDirectory() as directory:
+            given = Path(directory) / "given.jsonl"
+            given.write_text("")
+            self.assertEqual(module.find_session_file(
+                {"session_id": "s", "cwd": directory, "transcript_path": str(given)}), given)
+
+    def test_f5_stale_claims_recover_and_permanent_failures_are_dropped(self):
+        import time
+        module = _load_hook("gravity_extract_f5", "extract_memories.py")
+        with tempfile.TemporaryDirectory() as directory:
+            dead = Path(directory) / "dl"
+            dead.mkdir()
+            stale = dead / "old.claiming-999"
+            stale.write_text("{}")
+            os.utime(stale, (time.time() - 3600, time.time() - 3600))
+            fresh = dead / "new.claiming-998"
+            fresh.write_text("{}")
+            with mock.patch.object(module, "DEAD_LETTER_DIR", dead), \
+                 mock.patch.object(module, "log_failure"):
+                module._dead_letter_recover_stale_claims()
+            self.assertTrue((dead / "old.json").exists())
+            self.assertTrue(fresh.exists())
+            for f in dead.iterdir():
+                f.unlink()
+            for name in ("a", "b", "c"):
+                (dead / f"{name}.json").write_text(json.dumps({"prompt": name, "memory_dir": directory}))
+            kinds = iter(["model_not_found", "rate_limit_exceeded"])
+            with (mock.patch.object(module, "DEAD_LETTER_DIR", dead),
+                  mock.patch.object(module, "_extract_and_write", side_effect=lambda *a: next(kinds)),
+                  mock.patch.object(module, "log_failure") as log):
+                module._dead_letter_drain(time.monotonic() + 100)
+            self.assertEqual(sorted(f.name for f in dead.iterdir()), ["b.json", "c.json"])
+            self.assertIn("model_not_found", str(log.call_args_list))
+
+    def test_f6_design_debounce_keys_on_session_id_first(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, HOME=directory)
+            def run(payload):
+                return subprocess.run([sys.executable, str(HOOKS / "design-focus-redirect.py")],
+                                      input=json.dumps(payload), text=True, capture_output=True,
+                                      env=env, timeout=10).stdout
+            prompt = "build me a website please"
+            self.assertTrue(run({"sessionId": "A", "session_id": "B", "prompt": prompt}))
+            self.assertEqual(run({"sessionId": "A", "session_id": "C", "prompt": prompt}), "")
+            self.assertTrue(run({"session_id": "A2", "prompt": prompt}))
+
+
+
+class ReviewRound2RegressionTests(unittest.TestCase):
+    """Fixes from the second PR #7 review."""
+
+    def test_r2_legacy_4x_ids_stay_on_200k_and_5x_get_1m(self):
+        module = _load_hook("gravity_token_r2", "token_budget.py")
+        for model in ("claude-sonnet-4-6", "claude-opus-4-7", "claude-opus-4-8",
+                      "claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5", "claude-opus-6-0"):
+            with self.subTest(model=model):
+                self.assertEqual(module.context_window_for_model(model), 200_000)
+        for model in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5",
+                      "claude-fable-5-1", "claude-sonnet-4-6[1m]"):
+            with self.subTest(model=model):
+                self.assertEqual(module.context_window_for_model(model), 1_000_000)
+
+    def test_r2_poison_letters_move_aside_and_the_drain_continues(self):
+        import time
+        module = _load_hook("gravity_extract_r2", "extract_memories.py")
+        with tempfile.TemporaryDirectory() as directory:
+            dead = Path(directory) / "dl"
+            dead.mkdir()
+            (dead / "a.json").write_text("not json")
+            (dead / "b.json").write_text(json.dumps({"prompt": "P"}))
+            (dead / "c.json").write_text(json.dumps({"prompt": "P", "memory_dir": directory}))
+            with (mock.patch.object(module, "DEAD_LETTER_DIR", dead),
+                  mock.patch.object(module, "_extract_and_write", return_value="") as extract,
+                  mock.patch.object(module, "log_failure")):
+                module._dead_letter_drain(time.monotonic() + 100)
+            extract.assert_called_once()
+            self.assertEqual(sorted(f.name for f in dead.iterdir()), ["a.poison", "b.poison"])
+
+    def test_r2_stale_claim_strips_only_the_trailing_suffix(self):
+        import time
+        module = _load_hook("gravity_extract_r2b", "extract_memories.py")
+        with tempfile.TemporaryDirectory() as directory:
+            dead = Path(directory) / "dl"
+            dead.mkdir()
+            stale = dead / "x.claiming-5.claiming-999"
+            stale.write_text("{}")
+            os.utime(stale, (time.time() - 3600, time.time() - 3600))
+            with mock.patch.object(module, "DEAD_LETTER_DIR", dead), \
+                 mock.patch.object(module, "log_failure"):
+                module._dead_letter_recover_stale_claims()
+            self.assertEqual([f.name for f in dead.iterdir()], ["x.claiming-5.json"])
+
+    def test_r2_empty_reasoning_content_is_retryable_so_the_chunk_is_parked(self):
+        module = _load_hook("gravity_groq_r2", "groq_client.py")
+        body = {"choices": [{"message": {"content": ""}}]}
+        with (mock.patch.object(module, "_load_api_key", return_value="K"),
+              mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess(
+                  ["curl"], 0, json.dumps(body), "")),
+              mock.patch.object(module, "log_failure")):
+            _, reasoning_kind = module._call_groq_once("P", "openai/gpt-oss-20b", 10, 5, True)
+            _, other_kind = module._call_groq_once("P", "some/other-model", 10, 5, True)
+        self.assertTrue(module._is_retryable(reasoning_kind))
+        self.assertFalse(module._is_retryable(other_kind))
+
+
 if __name__ == "__main__":
     unittest.main()

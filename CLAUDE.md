@@ -27,7 +27,7 @@ TypeScript/TSX camelCase in `site/`, kebab-case docs, shell scripts snake/kebab 
 
 ## Models
 
-Current models (2026-09-29): Claude Opus 5.5 `claude-opus-5-5` is the default, Claude Fable 5.1 `claude-fable-5-1` handles the hardest reasoning and long agentic work, Claude Sonnet 5.5 `claude-sonnet-5-5` balances speed and intelligence, and Claude Haiku 4.5 `claude-haiku-4-5` is the fastest. See README for the full list.
+Current models (2026-09-29, Haiku updated 2026-10-26): Claude Opus 5.5 `claude-opus-5-5` is the default, Claude Fable 5.1 `claude-fable-5-1` handles the hardest reasoning and long agentic work, Claude Sonnet 5.5 `claude-sonnet-5-5` balances speed and intelligence, and Claude Haiku 5.5 `claude-haiku-5-5` is the fastest (Haiku 4.5 is legacy). See README for the full list.
 
 The Opus 4.7 notes at `toolkit/env/references/opus-4-7-operating-notes.md` and the companion repo `https://github.com/7alexhale5-rgb/opus-4-7-playbook` are kept as history.
 

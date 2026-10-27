@@ -19,3 +19,4 @@ EXECUTION_RULE_7=During /build-stack, if implementing new functionality (not con
 EXECUTION_RULE_8=CLOSEOUT: After /review-stack returns SHIP IT AND /commit completes, suggest /closeout-stack --mode=ship as the final step (handles ship + save + handoff + compound + resume prompt in one pipeline)
 EXECUTION_RULE_9=CLOSEOUT: When user says "wrap up", "close out", "end of session", "end of day", "pivot context", "clearing to continue", or types the manual chain "/sc → /handoff → /compound" (or any subset), suggest /closeout-stack with mode auto-detected
 EXECUTION_RULE_10=CLOSEOUT: /closeout-stack REPLACES the manual chain of /sc + /handoff + /compound + /ship + /commit for end-of-session work. When closeout applies, do not suggest those individually — suggest /closeout-stack instead
+EXECUTION_RULE_11=Keep change radius small: a single change touching more than ~25 files or ~800 net lines is too big to review or revert, so split it into single-concern slices

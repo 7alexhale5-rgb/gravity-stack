@@ -2,6 +2,12 @@
 
 ## 2026-10-26
 
+### Models and config
+
+- Current lineup is Opus 5.5 `claude-opus-5-5`, Sonnet 5.5 `claude-sonnet-5-5` and Haiku 5.5 `claude-haiku-5-5` (Fable 5.1 `claude-fable-5-1` for the hardest work). Haiku 4.5 is legacy.
+- Agents: scout and quickfix moved from `claude-haiku-4-5` to `claude-haiku-5-5`; implementer, research and tester moved from `claude-opus-5-5` to `claude-sonnet-5-5` (Sonnet is the default lane for implementation work).
+- Hooks: model-aware context window in `token_budget.py` and `carl-hook.py`, Groq client repin and bounded retry, a dead-letter queue for `extract_memories.py`, and a design nudge that now reaches the model.
+
 ### Docs
 
 - New deep-dive `docs/chief-of-staff.md`: the chief-of-staff operating model for multi-stream work. The chief of staff directs and builds nothing; each stream runs as its own session that outlives it; each session uses subagent-driven development; every task goes to the narrowest agent type; one owner per PR and one merger per repo. Covers the CoS files (roster, common brief, state log, resume prompt, unfinished-work register), the failure modes (lanes stop at session close, usage limits and network drops, unreliable auto-continue, blocking questions, records that must leave the laptop) and the daily and weekly upkeep. Generic: no client or personal data.

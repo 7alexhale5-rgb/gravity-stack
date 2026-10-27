@@ -42,14 +42,14 @@ COMMANDS_STATE=active
 # ============================================================================
 ROUTING_STATE=active
 ROUTING_ALWAYS_ON=false
-ROUTING_RECALL=model,agent,task,spawn,haiku,sonnet,opus,routing
+ROUTING_RECALL=model,spawn,delegate,subagent,haiku,sonnet,opus,routing,effort level
 
 # ============================================================================
 # EXECUTION - Build-phase workflow routing after planning
 # ============================================================================
 EXECUTION_STATE=active
 EXECUTION_ALWAYS_ON=false
-EXECUTION_RECALL=implement,build,execute,coding,start building,build-stack,verify,review,quality check,review-stack,ready to ship,closeout,close out,wrap up,end of session,end of day,pivot context,resume prompt
+EXECUTION_RECALL=implement,build,execute,coding,start building,build-stack,review,quality check,review-stack,ready to ship,closeout,close out,wrap up,end of session,end of day,pivot context,resume prompt
 
 # ============================================================================
 # OPUS-4-7 - Behavior policy for Claude Opus 4.7 (released 2026-04-16)
