@@ -5100,7 +5100,7 @@ class ReviewFixRegressionTests(unittest.TestCase):
                 module._dead_letter_drain(time.monotonic() + module.FULL_CALL_S + 1)
                 extract.assert_called_once()
 
-    def test_f3_context_counts_cache_creation_and_uses_the_counted_lines_model(self):
+    def test_f3_context_counts_cache_creation_and_keeps_the_last_seen_model(self):
         module = _load_hook("gravity_carl_f3", "carl-hook.py")
         with tempfile.TemporaryDirectory() as directory:
             transcript = Path(directory) / "t.jsonl"
@@ -5108,11 +5108,14 @@ class ReviewFixRegressionTests(unittest.TestCase):
                 transcript.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
                 return module.get_context_percentage(
                     {"session_id": "s", "cwd": directory, "transcript_path": str(transcript)})
-            self.assertEqual(pct({"message": {"model": "claude-sonnet-5-5", "usage": {
-                "input_tokens": 100, "cache_creation_input_tokens": 180000}}}), 82.0)
+            big = {"usage": {"input_tokens": 100, "cache_creation_input_tokens": 180000}}
+            self.assertEqual(pct({"message": dict(big, model="claude-sonnet-5-5")}), 82.0)
+            # A later usage line with no model keeps the model seen earlier.
             self.assertEqual(pct(
                 {"message": {"model": "claude-sonnet-5-5", "usage": {"input_tokens": 1000}}},
-                {"message": {"usage": {"input_tokens": 100, "cache_creation_input_tokens": 180000}}}), 10.0)
+                {"message": big}), 82.0)
+            # No line carries a model: the conservative unknown-model window.
+            self.assertEqual(pct({"message": big}), 10.0)
 
     def test_f4_extract_memories_uses_carl_encoding_and_given_transcript(self):
         carl = _load_hook("gravity_carl_f4", "carl-hook.py")
@@ -5164,6 +5167,64 @@ class ReviewFixRegressionTests(unittest.TestCase):
             self.assertTrue(run({"sessionId": "A", "session_id": "B", "prompt": prompt}))
             self.assertEqual(run({"sessionId": "A", "session_id": "C", "prompt": prompt}), "")
             self.assertTrue(run({"session_id": "A2", "prompt": prompt}))
+
+
+
+class ReviewRound2RegressionTests(unittest.TestCase):
+    """Fixes from the second PR #7 review."""
+
+    def test_r2_legacy_4x_ids_stay_on_200k_and_5x_get_1m(self):
+        module = _load_hook("gravity_token_r2", "token_budget.py")
+        for model in ("claude-sonnet-4-6", "claude-opus-4-7", "claude-opus-4-8",
+                      "claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5", "claude-opus-6-0"):
+            with self.subTest(model=model):
+                self.assertEqual(module.context_window_for_model(model), 200_000)
+        for model in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5",
+                      "claude-fable-5-1", "claude-sonnet-4-6[1m]"):
+            with self.subTest(model=model):
+                self.assertEqual(module.context_window_for_model(model), 1_000_000)
+
+    def test_r2_poison_letters_move_aside_and_the_drain_continues(self):
+        import time
+        module = _load_hook("gravity_extract_r2", "extract_memories.py")
+        with tempfile.TemporaryDirectory() as directory:
+            dead = Path(directory) / "dl"
+            dead.mkdir()
+            (dead / "a.json").write_text("not json")
+            (dead / "b.json").write_text(json.dumps({"prompt": "P"}))
+            (dead / "c.json").write_text(json.dumps({"prompt": "P", "memory_dir": directory}))
+            with (mock.patch.object(module, "DEAD_LETTER_DIR", dead),
+                  mock.patch.object(module, "_extract_and_write", return_value="") as extract,
+                  mock.patch.object(module, "log_failure")):
+                module._dead_letter_drain(time.monotonic() + 100)
+            extract.assert_called_once()
+            self.assertEqual(sorted(f.name for f in dead.iterdir()), ["a.poison", "b.poison"])
+
+    def test_r2_stale_claim_strips_only_the_trailing_suffix(self):
+        import time
+        module = _load_hook("gravity_extract_r2b", "extract_memories.py")
+        with tempfile.TemporaryDirectory() as directory:
+            dead = Path(directory) / "dl"
+            dead.mkdir()
+            stale = dead / "x.claiming-5.claiming-999"
+            stale.write_text("{}")
+            os.utime(stale, (time.time() - 3600, time.time() - 3600))
+            with mock.patch.object(module, "DEAD_LETTER_DIR", dead), \
+                 mock.patch.object(module, "log_failure"):
+                module._dead_letter_recover_stale_claims()
+            self.assertEqual([f.name for f in dead.iterdir()], ["x.claiming-5.json"])
+
+    def test_r2_empty_reasoning_content_is_retryable_so_the_chunk_is_parked(self):
+        module = _load_hook("gravity_groq_r2", "groq_client.py")
+        body = {"choices": [{"message": {"content": ""}}]}
+        with (mock.patch.object(module, "_load_api_key", return_value="K"),
+              mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess(
+                  ["curl"], 0, json.dumps(body), "")),
+              mock.patch.object(module, "log_failure")):
+            _, reasoning_kind = module._call_groq_once("P", "openai/gpt-oss-20b", 10, 5, True)
+            _, other_kind = module._call_groq_once("P", "some/other-model", 10, 5, True)
+        self.assertTrue(module._is_retryable(reasoning_kind))
+        self.assertFalse(module._is_retryable(other_kind))
 
 
 if __name__ == "__main__":

@@ -15,21 +15,17 @@ MAX_CONTEXT = 1_000_000  # Default window; see context_window_for_model().
 # window IS the denominator. Using 1M for a 200K model reports FRESH when only
 # ~15% of the real window is left.
 #
-# First match wins, so narrower keys come first.
-_CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
-    ("sonnet-4-5", 200_000),   # legacy 200K
-    ("opus-4-5", 200_000),     # legacy 200K
-    ("haiku-5", 1_000_000),    # Haiku 5.5: 1M window
-    ("haiku", 200_000),        # Haiku 4.5 and older
-    ("opus", 1_000_000),
-    ("sonnet", 1_000_000),
-    ("fable", 1_000_000),
-    ("mythos", 1_000_000),
+# Keyed by version prefix: only the 5.x families and ids explicitly marked
+# "[1m]" get 1M. Every 4.x Sonnet, Opus and Haiku id stays on 200K.
+_ONE_MILLION_MARKERS: tuple[str, ...] = (
+    "[1m]",
+    "opus-5", "sonnet-5", "haiku-5",
+    "fable", "mythos",              # 5.x-only families
 )
 
-# Unrecognized model: assume the SMALL window. Being wrong small costs an early
-# handoff nudge; being wrong large costs a silent overrun. Matching a family
-# above keeps a future Opus/Sonnet release correct without an edit here.
+# Unrecognized model (including any 4.x id): assume the SMALL window. Being
+# wrong small costs an early handoff nudge; being wrong large costs a silent
+# overrun. A new family gets 1M only by being added above.
 UNKNOWN_MODEL_CONTEXT = 200_000
 
 
@@ -38,9 +34,8 @@ def context_window_for_model(model: str | None) -> int:
     if not model:
         return UNKNOWN_MODEL_CONTEXT
     m = model.lower()
-    for key, window in _CONTEXT_WINDOWS:
-        if key in m:
-            return window
+    if any(marker in m for marker in _ONE_MILLION_MARKERS):
+        return 1_000_000
     return UNKNOWN_MODEL_CONTEXT
 
 

@@ -22,7 +22,7 @@ from pathlib import Path
 #   curl -s https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"
 # gpt-oss-* are reasoning models: they spend completion budget on reasoning
 # before content, so call_groq sends reasoning_effort="low" for them (below).
-DEFAULT_MODEL = "openai/gpt-oss-20b"
+DEFAULT_MODEL = "openai/gpt-oss-20b"  # Not probed against the live Groq API from this repo.
 DEFAULT_TIMEOUT = 15
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -91,6 +91,10 @@ def _is_retryable(kind: str) -> bool:
     # "rate_limit". An oversized request is fixed by chunking, never by waiting.
     if "too_large" in kind:
         return False
+    # A reasoning model can spend its whole budget before any content; the
+    # chunk is still good, so keep it for a retry instead of dropping it.
+    if kind == "empty_content_reasoning":
+        return True
     if kind.startswith(("no_api_key", "model_not_found", "invalid", "empty_",
                         "json_decode_error", "unexpected")):
         return False
@@ -233,8 +237,9 @@ def _call_groq_once(
 
         content = choices[0].get("message", {}).get("content", "")
         if not isinstance(content, str) or not content.strip():
-            log_failure("empty_content")
-            return None, "empty_content"
+            kind = "empty_content_reasoning" if model.startswith("openai/gpt-oss") else "empty_content"
+            log_failure(kind)
+            return None, kind
 
         return json.loads(content), ""
 

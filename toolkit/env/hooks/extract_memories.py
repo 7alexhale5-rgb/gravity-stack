@@ -258,9 +258,8 @@ def _dead_letter_maintain() -> None:
     if not DEAD_LETTER_DIR.is_dir():
         return
     try:
-        files = sorted(DEAD_LETTER_DIR.glob("*.json"))
         cutoff = time.time() - DEAD_LETTER_MAX_AGE_DAYS * 86400
-        for f in files:
+        for f in [*DEAD_LETTER_DIR.glob("*.json"), *DEAD_LETTER_DIR.glob("*.poison")]:
             if f.stat().st_mtime < cutoff:
                 log_failure(f"dead_letter_aged_out (>{DEAD_LETTER_MAX_AGE_DAYS}d): {f.name}")
                 f.unlink(missing_ok=True)
@@ -281,7 +280,8 @@ def _dead_letter_recover_stale_claims() -> None:
     for claimed in DEAD_LETTER_DIR.glob("*.claiming-*"):
         try:
             if claimed.stat().st_mtime < cutoff:
-                os.replace(claimed, claimed.with_name(claimed.name.split(".claiming-")[0] + ".json"))
+                original = re.sub(r"\.claiming-\d+$", "", claimed.name) + ".json"
+                os.replace(claimed, claimed.with_name(original))
                 log_failure(f"dead_letter_claim_recovered: {claimed.name}")
         except OSError:
             continue
@@ -307,28 +307,38 @@ def _dead_letter_drain(deadline: float) -> None:
             continue
         try:
             payload = json.loads(claimed.read_text())
-            memory_dir = Path(payload["memory_dir"])
-            if not memory_dir.is_dir():
-                log_failure(f"dead_letter_discarded_missing_dir: {path.name}")
-                claimed.unlink(missing_ok=True)
-                continue
-            kind = _extract_and_write(payload["prompt"], memory_dir, deadline)
-            if not kind:
-                claimed.unlink(missing_ok=True)
-                log_failure(f"dead_letter_replayed: {path.name}")
-            elif not _is_retryable(kind):
-                claimed.unlink(missing_ok=True)  # replaying cannot fix it
-                log_failure(f"dead_letter_dropped_permanent: {kind}: {path.name}")
-            else:
-                os.replace(claimed, path)  # transient: requeue untouched
-                return  # Groq is down; stop hammering it this run
+            prompt, memory_dir = payload["prompt"], Path(payload["memory_dir"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            # Poison letter: it can never replay, so move it aside and go on.
+            _dead_letter_set_aside(claimed, path, f"unreadable_{type(exc).__name__}")
+            continue
+        if not memory_dir.is_dir():
+            log_failure(f"dead_letter_discarded_missing_dir: {path.name}")
+            claimed.unlink(missing_ok=True)
+            continue
+        try:
+            kind = _extract_and_write(prompt, memory_dir, deadline)
         except Exception as exc:
-            log_failure(f"dead_letter_replay_error: {type(exc).__name__}")
-            try:
-                os.replace(claimed, path)
-            except OSError:
-                pass
-            return
+            _dead_letter_set_aside(claimed, path, f"replay_error_{type(exc).__name__}")
+            continue
+        if not kind:
+            claimed.unlink(missing_ok=True)
+            log_failure(f"dead_letter_replayed: {path.name}")
+        elif not _is_retryable(kind):
+            claimed.unlink(missing_ok=True)  # replaying cannot fix it
+            log_failure(f"dead_letter_dropped_permanent: {kind}: {path.name}")
+        else:
+            os.replace(claimed, path)  # transient: requeue untouched
+            return  # Groq is down; stop hammering it this run
+
+
+def _dead_letter_set_aside(claimed: Path, path: Path, reason: str) -> None:
+    """Move a letter that cannot replay to <name>.poison (aged out with the rest)."""
+    try:
+        os.replace(claimed, path.with_suffix(".poison"))
+        log_failure(f"dead_letter_poison: {reason}: {path.name}")
+    except OSError:
+        pass
 
 
 def find_session_file(input_data: dict) -> Path | None:

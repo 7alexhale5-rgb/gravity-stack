@@ -488,10 +488,10 @@ def get_context_percentage(input_data: dict) -> float | None:
                     )
                     if tokens > 0:
                         latest_tokens = tokens
-                        # Take the model only from the SAME line as the token
-                        # count, so the denominator matches what produced it. No
-                        # model there means the conservative unknown-model window.
-                        latest_model = message.get('model')
+                # Keep the last non-empty model seen: a usage line without one
+                # must not clear it. With no model on any line, _context_window
+                # falls back to the conservative unknown-model window.
+                latest_model = message.get('model') or latest_model
             except json.JSONDecodeError:
                 continue
 
